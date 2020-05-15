@@ -5,10 +5,16 @@ import hashlib
 import string
 import escapism
 import argparse
+import logging
 import pandas as pd
 from datetime import datetime, timedelta
+from time import strftime
 from urllib.parse import unquote
 from sqlalchemy import create_engine
+from concurrent.futures.process import ProcessPoolExecutor
+# from concurrent.futures.thread import ThreadPoolExecutor
+from concurrent.futures import as_completed
+
 
 PROVIDER_PREFIXES = {
     # name: prefix
@@ -237,7 +243,8 @@ def spec_parts(provider, spec):
     return org, ref, image_name, repo_url
 
 
-def parse_archive(archive_date):
+def parse_archive(archive_date, db_name, table_name):
+    """parse archive of given date and save into db"""
     a_name = f"events-{str(archive_date)}.jsonl"
     archive_url = f"https://archive.analytics.mybinder.org/{a_name}"
 
@@ -274,10 +281,16 @@ def parse_archive(archive_date):
     df[["org", "ref", "image_name", "repo_url"]] = df.apply(lambda row: spec_parts(row["provider"], row["spec"]),
                                                             axis=1,
                                                             result_type='expand')
-    return df
+
+    # save into database, without index
+    # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.to_sql.html
+    engine = create_engine(f'sqlite:///{db_name}', echo=False)
+    df.to_sql(table_name, con=engine, if_exists="append", index=False)
+
+    return len(df)
 
 
-def parse_mybinder_archive(engine, start_date, end_date, create_repo, verbose=False):
+def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, create_repo, logger, verbose=False):
     if verbose:
         start_time = datetime.now()
         print(f"parsing started at {start_time}")
@@ -290,18 +303,37 @@ def parse_mybinder_archive(engine, start_date, end_date, create_repo, verbose=Fa
     if verbose:
         counter = 0
         total_events = 0
-    while current_date <= end_date:
-        if verbose:
-            print(f"parsing archive of {current_date}")
-        df = parse_archive(current_date)
-        # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.to_sql.html
-        table_name = "mybinderlaunch"
-        df.to_sql(table_name, con=engine, if_exists="append", index=False)
-        current_date += one_day
-        if verbose:
-            counter += 1
-            total_events += len(df)
-            print(f"{len(df)} events")
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        jobs = {}
+        while current_date <= end_date or jobs:
+            while current_date <= end_date:
+                if verbose:
+                    print(f"parsing archive of {current_date}")
+                table_name = "mybinderlaunch"
+                job = executor.submit(parse_archive, current_date, db_name, table_name)
+                jobs[job] = str(current_date)
+                current_date += one_day
+                if verbose:
+                    counter += 1
+                # limit # jobs with max_workers
+                if len(jobs) == max_workers:
+                    break
+
+            for job in as_completed(jobs):
+                current_date_ = jobs[job]
+                try:
+                    df_len = job.result()
+                    if verbose:
+                        total_events += df_len
+                        print(f"{current_date_}: {df_len} events")
+                except Exception as exc:
+                    logger.exception(f"Archive {current_date_}")
+
+                del jobs[job]
+                # break to add a new job, if there is any
+                break
+
     if verbose:
         print(f"{counter} files are parsed and {total_events} events are saved into sqlite db.")
         print("now creating indexes.")
@@ -338,6 +370,10 @@ def get_args():
                              'Default is 2018-11-03 which is the date of the first archive.')
     parser.add_argument('-e', '--end_date', required=False, default=str(datetime.today().date()),
                         help='Last date to parse. In form of "YYYY-MM-DD". Default is today.')
+    parser.add_argument('-n', '--db_name', required=False, default="mybinder_archive",
+                        help='Default is mybinder_archive. '
+                             'Start, end date and timestamp is always appended into the name.')
+    parser.add_argument('-m', '--max_workers', type=int, default=4, help='Default is 4')
     parser.add_argument('-c', '--create_repo', required=False, default=False, action='store_true',
                         help='Create repo table? default is False')
     parser.add_argument('-v', '--verbose', required=False, default=False, action='store_true',
@@ -346,19 +382,34 @@ def get_args():
     return args
 
 
+def get_logger(start_date, end_date):
+    name = f"logger_{start_date}_{end_date}".replace("-", "_")
+    logger = logging.getLogger(name)
+    file_handler = logging.FileHandler('{}_at_{}.log'.format(name, strftime("%Y_%m_%d_%H_%M_%S")))
+    file_handler.setLevel(logging.ERROR)
+    # format_ = '%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s'
+    format_ = '%(asctime)s %(levelname)-8s %(message)s'
+    formatter = logging.Formatter(format_)
+    file_handler.setFormatter(formatter)
+    logger.handlers = [file_handler]
+    return logger
+
+
 def main():
     args = get_args()
     start_date = args.start_date
     end_date = args.end_date
+    db_name = args.db_name
+    max_workers = args.max_workers
     create_repo = args.create_repo
     verbose = args.verbose
 
-    db_name = f"mybinder_archive_{start_date}_{end_date}.db".replace("-", "_")
+    db_name = f'{db_name}_{start_date}_{end_date}_at_{strftime("%Y_%m_%d_%H_%M_%S")}.db'.replace("-", "_")
     engine = create_engine(f'sqlite:///{db_name}', echo=False)
-    if verbose:
-        print(start_date, end_date, db_name)
+    logger = get_logger(start_date, end_date)
+    # print(start_date, end_date, db_name, max_workers)
 
-    parse_mybinder_archive(engine, start_date, end_date, create_repo, verbose)
+    parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, create_repo, logger, verbose)
 
 
 if __name__ == '__main__':
