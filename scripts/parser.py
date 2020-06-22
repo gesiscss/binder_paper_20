@@ -159,7 +159,6 @@ def parse_spec(provider, spec):
     :return:
     """
     assert provider in PROVIDER_PREFIXES, f"unknown provider: {provider}"
-    # TODO ? replace get_ref with get_resolved_ref which returns resolved ref from timestamp
     ref = get_ref(provider, spec)
 
     if provider == 'GitHub':
@@ -259,12 +258,17 @@ def parse_archive(archive_date, db_name, table_name):
     # events-2019-06-12.jsonl has mixed rows: with and without origin value
     if a_name == "events-2019-06-12.jsonl":
         df['origin'].fillna('mybinder.org', inplace=True)
+    # events before 12.06.2019 has no origin value
+    if 'ref' not in df.columns:
+        # TODO we could use get_resolved_ref(timestamp, provider, spec) when it is implemented
+        df['ref'] = ""
+    # events-2020-06-18.jsonl has mixed rows: with and without ref value
+    if a_name == "events-2020-06-18.jsonl":
+        df['ref'].fillna('', inplace=True)
     # in some archives Gist launches have wrong provider (GitHub)
     elif a_name == "events-2018-11-25.jsonl":
-        df.loc[df[
-                   'spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "provider"] = "Gist"
-        df.loc[df[
-                   'spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "spec"] = "jakevdp/256c3ad937af9ec7d4c65a29e5b6d454"
+        df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "provider"] = "Gist"
+        df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "spec"] = "jakevdp/256c3ad937af9ec7d4c65a29e5b6d454"
     elif a_name == "events-2019-01-28.jsonl":
         df.loc[df['spec'] == "loicmarie/ade5ea460444ea0ff72d5c94daa14500", "provider"] = "Gist"
     elif a_name == "events-2019-02-22.jsonl":
@@ -273,6 +277,8 @@ def parse_archive(archive_date, db_name, table_name):
         df.loc[df['spec'] == "vingkan/25c74b0e1ea87110a740a9c29a901200", "provider"] = "Gist"
     elif a_name == "events-2019-03-07.jsonl":
         df.loc[df['spec'] == "bitnik/2b5b3ad303859663b222fa5a6c2d3726", "provider"] = "Gist"
+    # rename ref to resolved_ref, we will get ref from spec
+    df.rename(columns={'ref': 'resolved_ref'}, inplace=True)
 
     # generate new columns that we need for analysis
     # df[["org", "repo_name", "namespace", "ref", "image_name", "repo_url"]] = df.apply(lambda row: parse_spec(row["spec"]), axis=1, result_type='expand')
@@ -336,7 +342,7 @@ def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, c
         print(f"{counter} files are parsed and {total_events} events are saved into sqlite db.")
         print("now creating indexes.")
 
-    # create indexes and repo table
+    # create indexes on mybinderlaunch table and create also the repo table
     columns_to_index = ["timestamp", "spec", "repo_url", "ref", "origin", "provider"]
     with engine.connect() as connection:
         for column_name in columns_to_index:
@@ -349,7 +355,8 @@ def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, c
                                f'SELECT spec, repo_url, image_name, '
                                f'COUNT(repo_url) AS launch_count, '
                                f'MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts, '
-                               f'GROUP_CONCAT(DISTINCT ref) AS refs '
+                               f'GROUP_CONCAT(DISTINCT ref) AS refs, '
+                               f'GROUP_CONCAT(DISTINCT resolved_ref) AS resolved_refs '
                                f'FROM {table_name} GROUP BY "repo_url";')
             # TODO columns_to_index = []
 
