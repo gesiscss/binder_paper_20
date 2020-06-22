@@ -345,11 +345,12 @@ def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, c
             if verbose:
                 print("creating repo table.")
             repo_table_name = "repo"
-            connection.execute(f'create table {repo_table_name} AS '
-                               f'select spec, repo_url, image_name, '
-                               f'min(timestamp) as min_ts, max(timestamp) as max_ts, '
-                               f'GROUP_CONCAT(DISTINCT ref) as refs '
-                               f'from {table_name} group by "repo_url";')
+            connection.execute(f'CREATE TABLE {repo_table_name} AS '
+                               f'SELECT spec, repo_url, image_name, '
+                               f'COUNT(repo_url) AS launch_count, '
+                               f'MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts, '
+                               f'GROUP_CONCAT(DISTINCT ref) AS refs '
+                               f'FROM {table_name} GROUP BY "repo_url";')
             # TODO columns_to_index = []
 
     if verbose:
