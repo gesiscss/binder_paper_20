@@ -109,8 +109,6 @@ def get_ref(provider, spec):
             # in the archive there are specs like "ELC/380e584b87227b15727ec886223d9d4a/master/master"
             # SergiyKolesnikov/f94d91b947051ab5d2ba1aa30e25f050 - this is also valid spec
             ref = "master"
-        # user_name, gist_id, unresolved_ref, *_ =
-        # ref = unresolved_ref
     elif provider == 'GitLab':
         quoted_namespace, unresolved_ref = spec.split('/', 1)
         # Git branch, tag, or commit SHA
@@ -145,7 +143,7 @@ def get_ref(provider, spec):
     return ref
 
 
-def spec_parts(provider, spec):
+def parse_spec(provider, spec):
     """
     Generates namespace, org, repo_name, ref, image_name, repo_url data from provider and spec data.
     - ref: this is the ref which is passed to repo2docker, not the one in binder form
@@ -170,7 +168,7 @@ def spec_parts(provider, spec):
         # there are specs like "1-Nameless-1/Lign167.git/master"
         repo_name = strip_suffix(repo_name)
         namespace = f'{org}/{repo_name}'
-        repo_url = f'https://www.github.com/{namespace}'
+        repo_url = f'https://github.com/{namespace}'
         docker_repo_name = namespace
     elif provider == 'Gist':
         # https://binderlytics.herokuapp.com/binder-launches?sql=select+distinct+spec+from+binder+where+provider+%3D+%22Gist%22
@@ -188,7 +186,7 @@ def spec_parts(provider, spec):
         # there are specs like "ipyhc/ipyhc.gitlab.io/master"
         repo_name = strip_suffix(repo_name)
         namespace = f'{org}/{repo_name}'
-        repo_url = f'https://www.gitlab.com/{namespace}'
+        repo_url = f'https://gitlab.com/{namespace}'
         docker_repo_name = namespace
     elif provider == 'Git':
         # https://binderlytics.herokuapp.com/binder-launches?sql=select+distinct+spec+from+binder+where+provider+%3D+%22Git%22
@@ -277,8 +275,8 @@ def parse_archive(archive_date, db_name, table_name):
         df.loc[df['spec'] == "bitnik/2b5b3ad303859663b222fa5a6c2d3726", "provider"] = "Gist"
 
     # generate new columns that we need for analysis
-    # df[["org", "repo_name", "namespace", "ref", "image_name", "repo_url"]] = df.apply(lambda row: spec_parts(row["spec"]), axis=1, result_type='expand')
-    df[["org", "ref", "image_name", "repo_url"]] = df.apply(lambda row: spec_parts(row["provider"], row["spec"]),
+    # df[["org", "repo_name", "namespace", "ref", "image_name", "repo_url"]] = df.apply(lambda row: parse_spec(row["spec"]), axis=1, result_type='expand')
+    df[["org", "ref", "image_name", "repo_url"]] = df.apply(lambda row: parse_spec(row["provider"], row["spec"]),
                                                             axis=1,
                                                             result_type='expand')
 
