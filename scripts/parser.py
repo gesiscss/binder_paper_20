@@ -347,7 +347,7 @@ def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, c
         print("now creating indexes.")
 
     # create indexes on mybinderlaunch table and create also the repo table
-    columns_to_index = ["timestamp", "spec", "repo_url", "ref", "origin", "provider"]
+    columns_to_index = ["timestamp", "origin", "provider", "repo_url", "resolved_ref", "ref"]
     with engine.connect() as connection:
         for column_name in columns_to_index:
             connection.execute(f"CREATE INDEX ix_mybinderlaunch_{column_name} ON {table_name} ({column_name})")
