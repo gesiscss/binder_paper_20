@@ -91,7 +91,8 @@ def get_resolved_ref(timestamp, provider, spec):
 
 def get_ref(provider, spec):
     """
-    returns ref which is passed to repo2docker --ref
+    returns unresolved ref from spec.
+    in binder resolved ref (of that ref at that time) is passed to repo2docker --ref.
     """
     assert provider in PROVIDER_PREFIXES, f"unknown provider: {provider}"
     # NOTE: branch names can contain "/"
@@ -146,7 +147,7 @@ def get_ref(provider, spec):
 def parse_spec(provider, spec):
     """
     Generates namespace, org, repo_name, ref, image_name, repo_url data from provider and spec data.
-    - ref: this is the ref which is passed to repo2docker, not the one in binder form
+    - ref: this is the unresolved ref, the one passed through binder form
     - image_name: "<repo_name>:<tag_name>" will be passed to repo2docker, it is the name of the output image
     - repo_url: will be passed to repo2docker
 
@@ -258,11 +259,11 @@ def parse_archive(archive_date, db_name, table_name):
     # events-2019-06-12.jsonl has mixed rows: with and without origin value
     if a_name == "events-2019-06-12.jsonl":
         df['origin'].fillna('mybinder.org', inplace=True)
-    # events before 12.06.2019 has no origin value
+    # events before 12.06.2019 has no (resolved) ref
     if 'ref' not in df.columns:
         # TODO we could use get_resolved_ref(timestamp, provider, spec) when it is implemented
         df['ref'] = ""
-    # events-2020-06-18.jsonl has mixed rows: with and without ref value
+    # events-2020-06-18.jsonl has mixed rows: with and without (resolved) ref value
     if a_name == "events-2020-06-18.jsonl":
         df['ref'].fillna('', inplace=True)
     # in some archives Gist launches have wrong provider (GitHub)
@@ -278,6 +279,7 @@ def parse_archive(archive_date, db_name, table_name):
     elif a_name == "events-2019-03-07.jsonl":
         df.loc[df['spec'] == "bitnik/2b5b3ad303859663b222fa5a6c2d3726", "provider"] = "Gist"
     # rename ref to resolved_ref, we will get ref from spec
+    # resolved ref is the one which is passed to repo2docker for build
     df.rename(columns={'ref': 'resolved_ref'}, inplace=True)
 
     # generate new columns that we need for analysis
@@ -311,6 +313,8 @@ def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, c
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         jobs = {}
         while current_date <= end_date or jobs:
+            # continue creating new jobs until reaching to last date
+            # or wait until all jobs finish
             while current_date <= end_date:
                 if verbose:
                     print(f"parsing archive of {current_date}")
@@ -320,7 +324,7 @@ def parse_mybinder_archive(start_date, end_date, max_workers, engine, db_name, c
                 current_date += one_day
                 if verbose:
                     counter += 1
-                # limit # jobs with max_workers
+                # limit number of jobs with max_workers
                 if len(jobs) == max_workers:
                     break
 
