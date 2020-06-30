@@ -5,7 +5,7 @@ import argparse
 import pandas as pd
 from datetime import datetime, timedelta
 from time import strftime
-from sqlalchemy import create_engine
+from sqlite_utils import Database
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
 from utils import get_ref, get_org, get_repo_url, get_logger
@@ -72,8 +72,9 @@ def parse_archive(archive_date, db_name, table_name):
 
     # save into database, without index
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.to_sql.html
-    engine = create_engine(f'sqlite:///{db_name}', echo=False)
-    df.to_sql(table_name, con=engine, if_exists="append", index=False)
+    # first connect to db
+    db = Database(db_name)
+    df.to_sql(table_name, con=db.conn, if_exists="append", index=False)
 
     return len(df)
 
@@ -92,13 +93,14 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
         counter = 0
         total_events = 0
 
-    engine = create_engine(f'sqlite:///{db_name}', echo=False)
+    db = Database(db_name)
     table_name = "mybinderlaunch"
-    if engine.dialect.has_table(engine, table_name):
+    if table_name in db.table_names():
         raise Exception(f"table {table_name} already exists in {db_name}")
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         logger_name = db_name[:-3]
+        logger_name = "parse_mybinder_archive" + "_at_" + logger_name.split("_at_")[-1]
         logger = get_logger(logger_name)
         jobs = {}
         while current_date <= end_date or jobs:
@@ -136,10 +138,7 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
 
     # create indexes on mybinderlaunch table
     columns_to_index = ["timestamp", "origin", "provider", "resolved_ref", "ref", "repo_url"]
-    # engine = create_engine(f'sqlite:///{db_name}', echo=False)
-    with engine.connect() as connection:
-        for column_name in columns_to_index:
-            connection.execute(f"CREATE INDEX ix_mybinderlaunch_{column_name} ON {table_name} ({column_name})")
+    db[table_name].create_index(columns_to_index)
 
     if verbose:
         end_time = datetime.now()
