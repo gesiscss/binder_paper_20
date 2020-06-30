@@ -3,6 +3,8 @@ import hashlib
 import string
 import escapism
 import time
+import requests
+from yaml import safe_load
 from github import Github, GithubException
 from urllib.parse import unquote
 from sqlite_utils import Database
@@ -182,6 +184,17 @@ async def is_fork(provider, repo_url, access_token=None):
         return 0
     else:
         return None
+
+
+def get_repo2docker_image():
+    """
+    Get the r2d image used in mybinder.org
+    """
+    url = "https://raw.githubusercontent.com/jupyterhub/mybinder.org-deploy/master/mybinder/values.yaml"
+    values_yaml = requests.get(url)
+    helm_chart = safe_load(values_yaml.text)
+    r2d_image = helm_chart['binderhub']['config']['BinderHub']['build_image']
+    return r2d_image
 
 
 def get_logger(name):
