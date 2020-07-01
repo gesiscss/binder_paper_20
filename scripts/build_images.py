@@ -88,18 +88,16 @@ def build_images(db_name, r2d_image, launch_limit=0, max_workers=1, continue_=Fa
 
     repo_table = "repo"
     db = Database(db_name)
+    where = f"fork=0 AND resolved_ref_now!=404 AND launch_count>{launch_limit}"
     if "build_success" in db[repo_table].columns_dict:
         if continue_:
-            where = f"launch_count > {launch_limit} AND build_success IS null"
+            where += " AND build_success IS null"
         else:
             raise Exception(f"{repo_table} in {db_name} is already processed. "
                             f"If you want to continue, pass `--cont` flag."
                             f"Or if you want to re-process everything, "
                             f"you could rename `build_success` column manually, "
                             f"e.g. `ALTER TABLE {repo_table} RENAME COLUMN build_success to build_success_old;`")
-    else:
-        where = f"launch_count > {launch_limit}"
-        # where = ["launch_count > ?", [launch_limit]]
     rows = db[repo_table].rows_where(where)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         logger_name = f'build_images_at_{strftime("%Y_%m_%d_%H_%M_%S")}'.replace("-", "_")
