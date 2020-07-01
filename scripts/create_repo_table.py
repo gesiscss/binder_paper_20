@@ -26,17 +26,17 @@ async def create_repo_table(db_name, providers, launch_limit,
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
     chunk_size = 5000 if access_token else 10000
-    df_iter = pd.read_sql_query(f'SELECT provider, spec, repo_url, '
-                                f'COUNT(repo_url) AS launch_count, '
-                                f'MIN(timestamp) AS min_ts, '
-                                f'MAX(timestamp) AS max_ts, '
-                                f'GROUP_CONCAT(DISTINCT ref) AS refs, '
-                                f'GROUP_CONCAT(DISTINCT resolved_ref) AS resolved_refs '
-                                f'FROM {launch_table} '
-                                f'WHERE provider IN ({", ".join(providers)}) '
-                                f'GROUP BY repo_url '
-                                f'HAVING launch_count > {launch_limit} '
-                                f'ORDER BY min_ts;',
+    df_iter = pd.read_sql_query(f"""SELECT provider, spec, repo_url, 
+                                           COUNT(repo_url) AS launch_count, 
+                                           MIN(timestamp) AS first_launch, 
+                                           MAX(timestamp) AS last_launch, 
+                                           GROUP_CONCAT(DISTINCT ref) AS refs, 
+                                           GROUP_CONCAT(DISTINCT resolved_ref) AS resolved_refs 
+                                     FROM {launch_table} 
+                                     WHERE provider IN ({", ".join(providers)}) 
+                                     GROUP BY repo_url 
+                                     HAVING launch_count > {launch_limit} 
+                                     ORDER BY first_launch;""",
                                 db.conn,
                                 chunksize=chunk_size)
     id_ = 1
@@ -100,7 +100,7 @@ async def create_repo_table(db_name, providers, launch_limit,
             index, row = next(rows)
 
         # re-order columns, so more readable + also drop redundant columns
-        columns = ['id', 'repo_url', 'provider', 'launch_count', 'min_ts', 'max_ts', 'refs', 'resolved_refs']
+        columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'refs', 'resolved_refs']
         if access_token:
             columns.extend(['fork', 'image_name', 'resolved_ref_now'])
         df_chunk = df_chunk[columns]
@@ -113,7 +113,8 @@ async def create_repo_table(db_name, providers, launch_limit,
 
     if verbose:
         end_time = datetime.now()
-        print(f"repo table is created with {repo_count} entries, finished at {end_time}")
+        print(f"repo table is created with {repo_count} entries")
+        print(f"finished at {end_time}")
         print(f"duration: {end_time - start_time}")
 
 
