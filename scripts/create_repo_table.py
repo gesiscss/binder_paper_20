@@ -39,7 +39,7 @@ async def create_repo_table(db_name, providers, launch_limit,
                                 f'ORDER BY min_ts;',
                                 db.conn,
                                 chunksize=chunk_size)
-    id_ = 0
+    id_ = 1
     for df_chunk in df_iter:
         df_chunk["id"] = 0
         if access_token:
