@@ -20,8 +20,21 @@ async def create_repo_table(db_name, providers, launch_limit,
     launch_table = "mybinderlaunch"
     repo_table = "repo"
     db = Database(db_name)
+    # list of columns in the order that we will have in repo table
+    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'refs', 'resolved_refs']
+    if access_token:
+        columns.extend(['fork', 'image_name', 'resolved_ref_now'])
     if repo_table in db.table_names():
         raise Exception(f"table {repo_table} already exists in {db_name}")
+    else:
+        # create repo table with id column as primary key
+        repos = db[repo_table]
+        # to_sql doesnt support setting pk column
+        # that's why here we have to add a temp row and delete it again
+        r = {c: 1 if c in ["id", "launch_count"] else "" for c in columns}
+        # here we set the pk column
+        repos.insert(r, pk="id")
+        repos.delete(1)
 
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
@@ -100,9 +113,6 @@ async def create_repo_table(db_name, providers, launch_limit,
             index, row = next(rows)
 
         # re-order columns, so more readable + also drop redundant columns
-        columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'refs', 'resolved_refs']
-        if access_token:
-            columns.extend(['fork', 'image_name', 'resolved_ref_now'])
         df_chunk = df_chunk[columns]
         df_chunk.set_index('id', inplace=True)
         df_chunk.to_sql(repo_table, con=db.conn, if_exists="append", index=True)
