@@ -66,7 +66,7 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
             # TODO analyse/parse these logs
             # print(log)
     log_dict = json.loads(log)
-    # print(log_dict)
+    print(log_dict)
     if log_dict["phase"] == "failure":
         # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
         build_success = 0
@@ -181,7 +181,7 @@ if __name__ == '__main__':
     r2d_image = args.r2d_image
     if not r2d_image:
         r2d_image = get_repo2docker_image()
-    print(r2d_image)
+    print(f"Using {r2d_image}")
     launch_limit = args.launch_limit
     continue_ = args.cont
     max_workers = args.max_workers
