@@ -5,6 +5,7 @@ import escapism
 import time
 from github import Github, GithubException
 from urllib.parse import unquote
+from sqlite_utils import Database
 from binderhub.repoproviders import strip_suffix, GitHubRepoProvider, GitRepoProvider, \
      GitLabRepoProvider, GistRepoProvider, ZenodoProvider, FigshareProvider, \
      HydroshareProvider, DataverseProvider
@@ -194,3 +195,16 @@ def get_logger(name):
     file_handler.setFormatter(formatter)
     logger.handlers = [file_handler]
     return logger
+
+
+def drop_column(db_name, table_name, columns):
+    """columns is the list of columns that you want to keep in table"""
+    db = Database(db_name)
+    db.conn.execute(f"""BEGIN TRANSACTION;
+    CREATE TEMPORARY TABLE {table_name}_backup({",".join(columns)});
+    INSERT INTO {table_name}_backup SELECT {",".join(columns)} FROM {table_name};
+    DROP TABLE {table_name};
+    CREATE TABLE {table_name}({",".join(columns)});
+    INSERT INTO {table_name} SELECT {",".join(columns)} FROM {table_name}_backup;
+    DROP TABLE {table_name}_backup;
+    COMMIT;""")
