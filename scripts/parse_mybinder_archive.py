@@ -139,6 +139,8 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
     # create indexes on mybinderlaunch table
     columns_to_index = ["timestamp", "origin", "provider", "resolved_ref", "ref", "repo_url"]
     db[table_name].create_index(columns_to_index)
+    # optimize the database
+    db.vacuum()
 
     if verbose:
         end_time = datetime.now()

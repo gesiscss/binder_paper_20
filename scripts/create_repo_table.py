@@ -111,6 +111,8 @@ async def create_repo_table(db_name, providers, launch_limit,
             repo_count += len(df_chunk)
         # print(df_chunk.dtypes)
 
+    # optimize the database
+    db.vacuum()
     if verbose:
         end_time = datetime.now()
         print(f"repo table is created with {repo_count} entries")
