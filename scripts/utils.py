@@ -119,6 +119,7 @@ def get_repo_url(provider, spec):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
     repo_url = REPO_PROVIDERS[provider](spec=spec).get_repo_url()
+    repo_url = strip_suffix(repo_url, ".git").lower()
     return repo_url
 
 
@@ -158,7 +159,6 @@ async def is_fork(provider, repo_url, access_token=None):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
 
-    repo_url = strip_suffix(repo_url, ".git")
     if provider in ["GitHub", "Gist"]:
         try:
             g = Github(access_token)
