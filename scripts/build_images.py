@@ -79,7 +79,7 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
     return row_id, build_success
 
 
-def build_images(db_name, r2d_image, launch_limit=0, max_workers=1, continue_=False, verbose=False):
+def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1, continue_=False, verbose=False):
     if verbose:
         start_time = datetime.now()
         print(f"building images, started at {start_time}")
@@ -88,7 +88,9 @@ def build_images(db_name, r2d_image, launch_limit=0, max_workers=1, continue_=Fa
 
     repo_table = "repo"
     db = Database(db_name)
-    where = f"fork=0 AND resolved_ref_now!=404 AND launch_count>{launch_limit}"
+    where = f"resolved_ref_now!=404 AND launch_count>{launch_limit}"
+    if not forks:
+        where = f"fork=0 AND " + where
     if "build_success" in db[repo_table].columns_dict:
         if continue_:
             where += " AND build_success IS null"
@@ -165,7 +167,9 @@ def get_args():
                              'Default is what is currently used in mybinder.org')
     parser.add_argument('-l', '--launch_limit', type=int, default=0,
                         help='Minimum number of launches for a repo to be built. '
-                             'Default is 0, which means build all.')
+                             'Default is 0, which means build images all repos.')
+    parser.add_argument('-f', '--forks', required=False, default=False, action='store_true',
+                        help='Build images of forks too. Default is False')
     parser.add_argument('-c', '--cont', required=False, default=False, action='store_true',
                         help='if this script already executed before. default is False')
     parser.add_argument('-m', '--max_workers', type=int, default=4, help='Default is 4')
@@ -183,8 +187,9 @@ if __name__ == '__main__':
         r2d_image = get_repo2docker_image()
     print(f"Using {r2d_image}")
     launch_limit = args.launch_limit
+    forks = args.forks
     continue_ = args.cont
     max_workers = args.max_workers
     verbose = args.verbose
 
-    build_images(db_name, r2d_image, launch_limit, max_workers, continue_, verbose)
+    build_images(db_name, r2d_image, launch_limit, forks, max_workers, continue_, verbose)
