@@ -20,19 +20,7 @@ def parse_spec(provider, spec):
     return ref, org, repo_url
 
 
-def parse_archive(archive_date, db_name, table_name):
-    """parse archive of given date and save into the database
-    returns number of saved events"""
-    a_name = f"events-{str(archive_date)}.jsonl"
-    archive_url = f"https://archive.analytics.mybinder.org/{a_name}"
-
-    # first read events from archive
-    df = pd.read_json(archive_url, lines=True)
-    # drop columns that we dont need for analysis
-    # df = df.drop(["schema", "version", "status"], axis=1)
-    df = df.drop(["schema", "status"], axis=1)
-
-    # handle exceptions in events archive
+def _handle_exceptions_in_archve(df, a_name):
     # events before 12.06.2019 has no origin value
     if 'origin' not in df.columns:
         df["origin"] = "mybinder.org"
@@ -58,6 +46,24 @@ def parse_archive(archive_date, db_name, table_name):
         df.loc[df['spec'] == "vingkan/25c74b0e1ea87110a740a9c29a901200", "provider"] = "Gist"
     elif a_name == "events-2019-03-07.jsonl":
         df.loc[df['spec'] == "bitnik/2b5b3ad303859663b222fa5a6c2d3726", "provider"] = "Gist"
+    return df
+
+
+def parse_archive(archive_date, db_name, table_name):
+    """parse archive of given date and save into the database
+    returns number of saved events"""
+    a_name = f"events-{str(archive_date)}.jsonl"
+    archive_url = f"https://archive.analytics.mybinder.org/{a_name}"
+
+    # first read events from archive
+    df = pd.read_json(archive_url, lines=True)
+    # drop columns that we dont need for analysis
+    # df = df.drop(["schema", "version", "status"], axis=1)
+    df = df.drop(["schema", "status"], axis=1)
+
+    # handle exceptions in events archive
+    df = _handle_exceptions_in_archve(df, a_name)
+
     # rename ref to resolved_ref, we will get ref from spec
     # resolved ref is the one which is passed to repo2docker for build
     df.rename(columns={'ref': 'resolved_ref'}, inplace=True)
