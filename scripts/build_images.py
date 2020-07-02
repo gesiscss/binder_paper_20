@@ -128,7 +128,7 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
                         row_id, build_success = job.result()
                         # update row with build info
                         db[repo_table].update(row_id, {"build_success": build_success}, alter=True)
-                        logger.info(f"{row_id: build success: {build_success}}")
+                        logger.info(f"{row_id}: build success: {build_success}")
                         if verbose:
                             repo_count_ += 1
                     except Exception as exc:
