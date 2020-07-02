@@ -38,7 +38,7 @@ async def create_repo_table(db_name, providers, launch_limit,
 
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
-    chunk_size = 5000 if access_token else 10000
+    chunk_size = 10000
     df_iter = pd.read_sql_query(f"""SELECT provider, spec, repo_url, 
                                            COUNT(repo_url) AS launch_count, 
                                            MIN(timestamp) AS first_launch, 
