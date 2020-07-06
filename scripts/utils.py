@@ -108,6 +108,7 @@ async def get_resolved_ref_now(provider, spec, access_token=None):
             # setattr(e, "data", {"minutes_until_reset": minutes_until_reset})
             raise e
         if resolved_ref_now is None:
+            # resolved ref not found
             return "404"
         else:
             return resolved_ref_now
@@ -155,11 +156,12 @@ def get_image_name(provider, spec, image_prefix, ref):
     return image_name
 
 
-async def is_fork(provider, repo_url, access_token=None):
+async def get_repo_data(provider, repo_url, access_token=None):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
 
     if provider in ["GitHub", "Gist"]:
+        repo_data = {}
         try:
             g = Github(access_token)
             if provider == "GitHub":
@@ -168,10 +170,13 @@ async def is_fork(provider, repo_url, access_token=None):
                 repo = g.get_repo(f"{full_name}")
             else:
                 repo = g.get_gist(f'{repo_url.split("/")[-1]}')
+            # we need remote_id to detect renamed repos
+            repo_data["remote_id"] = repo.id
         except GithubException as e:
             if e.status == 404:
                 # repo doesnt exists anymore
-                return 404
+                repo_data["fork"] = 404
+                return repo_data
             elif e.status == 403:
                 reset_seconds = g.rate_limiting_resettime - time.time()
                 # round expiry up to nearest 5 minutes (as it is done in bhub)
@@ -180,8 +185,10 @@ async def is_fork(provider, repo_url, access_token=None):
                 raise e
         if getattr(repo, "fork", None) or getattr(repo, "fork_of", None):
             # GitHub object has fork attribute, but Gist object has fork_of
-            return 1
-        return 0
+            repo_data["fork"] = 1
+        else:
+            repo_data["fork"] = 0
+        return repo_data
     else:
         return None
 

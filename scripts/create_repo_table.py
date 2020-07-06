@@ -3,9 +3,10 @@ import argparse
 import pandas as pd
 from datetime import datetime
 from time import sleep
+from tornado.httpclient import HTTPClientError
 from sqlite_utils import Database
 from time import strftime
-from utils import is_fork, get_resolved_ref_now, get_image_name, get_logger, GithubException
+from utils import get_repo_data, get_resolved_ref_now, get_image_name, get_logger, GithubException
 
 
 async def create_repo_table(db_name, providers, launch_limit,
@@ -23,7 +24,7 @@ async def create_repo_table(db_name, providers, launch_limit,
     # list of columns in the order that we will have in repo table
     columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'refs', 'resolved_refs']
     if access_token:
-        columns.extend(['fork', 'image_name', 'resolved_ref_now'])
+        columns.extend(['remote_id', 'fork', 'resolved_ref_now', 'image_name'])
     if repo_table in db.table_names():
         raise Exception(f"table {repo_table} already exists in {db_name}")
     else:
@@ -57,9 +58,11 @@ async def create_repo_table(db_name, providers, launch_limit,
         df_chunk["id"] = 0
         if access_token:
             # fetch additional data from GitHub API
-            df_chunk["image_name"] = ""
-            df_chunk["resolved_ref_now"] = ""
+            df_chunk["image_name"] = None
+            df_chunk["resolved_ref_now"] = None
             df_chunk["fork"] = None
+            # there will be repos with same remote_id, because they are renamed
+            df_chunk["remote_id"] = None
         rows = df_chunk.iterrows()
         index, row = next(rows)
         len_rows = len(df_chunk)
@@ -70,9 +73,13 @@ async def create_repo_table(db_name, providers, launch_limit,
                 try:
                     resolved_ref_now = await get_resolved_ref_now(row["provider"], row["spec"], access_token)
                     df_chunk.at[index, "resolved_ref_now"] = resolved_ref_now
-                    image_name = get_image_name(row["provider"], row["spec"], image_prefix, resolved_ref_now)
-                    df_chunk.at[index, "image_name"] = image_name
-                    df_chunk.at[index, "fork"] = await is_fork(row["provider"], row["repo_url"], access_token)
+                    if resolved_ref_now and resolved_ref_now != "404":
+                        image_name = get_image_name(row["provider"], row["spec"], image_prefix, resolved_ref_now)
+                        df_chunk.at[index, "image_name"] = image_name
+                    repo_data = await get_repo_data(row["provider"], row["repo_url"], access_token)
+                    if repo_data:
+                        df_chunk.at[index, "remote_id"] = repo_data.get("remote_id")
+                        df_chunk.at[index, "fork"] = repo_data.get("fork")
                 except ValueError as e:
                     minutes_until_reset = e.args[0].split(" minutes")[0].split()[-1].strip()
                     minutes_until_reset = int(minutes_until_reset)
@@ -95,13 +102,18 @@ async def create_repo_table(db_name, providers, launch_limit,
                         sleep(minutes_until_reset*60)
                         # continue to process last repo again
                         continue
-                except Exception as exc:
+                    else:
+                        logger.exception(f'{row["repo_url"]}')
+                except Exception as e:
                     if retry > 1:
                         logger.info(f'Error while processing {row["repo_url"]}, attempt {4-retry}')
                         sleep(retry**retry)
                         retry -= 1
                         continue
                     else:
+                        if isinstance(e, HTTPClientError):
+                            # tornado.httpclient.HTTPClientError is raised in get_resolved_ref_now
+                            df_chunk.at[index, "resolved_ref_now"] = str(e.code)
                         logger.exception(f'{row["repo_url"]}')
             # get next row
             id_ += 1
