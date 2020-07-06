@@ -106,21 +106,29 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         logger_name = f'build_images_at_{strftime("%Y_%m_%d_%H_%M_%S")}'.replace("-", "_")
         logger = get_logger(logger_name)
+        renamed_processed = set()
         jobs = {}
         log_folder = logger_name+"_logs"
         row = next(rows)
         while True:
             # print(row)
             if row:
-                job = executor.submit(build_image, r2d_image,
-                                                   repo=row["repo_url"],
-                                                   ref=row["resolved_ref_now"],
-                                                   image_name=row["image_name"],
-                                                   row_id=row["id"],
-                                                   log_folder=log_folder)
-                jobs[job] = f'{row["id"]}:{row["repo_url"]}'
-                if verbose:
-                    repo_count += 1
+                renamed = int(row["renamed"]) == 1
+                if renamed and row["remote_id"] in renamed_processed:
+                    logger.info(f'Renamed repo, skipping: {row["id"]}: {row["repo_url"]}')
+                else:
+                    if renamed == 1:
+                        # renamed but not processed yet
+                        renamed_processed.add(row["remote_id"])
+                    job = executor.submit(build_image, r2d_image,
+                                                       repo=row["repo_url"],
+                                                       ref=row["resolved_ref_now"],
+                                                       image_name=row["image_name"],
+                                                       row_id=row["id"],
+                                                       log_folder=log_folder)
+                    jobs[job] = f'{row["id"]}:{row["repo_url"]}'
+                    if verbose:
+                        repo_count += 1
 
             # limit number of jobs with max_workers
             if len(jobs) == max_workers or not row:
@@ -133,6 +141,7 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
                         logger.info(f"{row_id}: build success: {build_success}")
                         if verbose:
                             repo_count_ += 1
+                            print(f"{repo_count_} repos are processed")
                     except Exception as exc:
                         logger.exception(f"{id_repo_url}")
 

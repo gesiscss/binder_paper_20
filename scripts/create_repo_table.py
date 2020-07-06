@@ -133,6 +133,26 @@ async def create_repo_table(db_name, providers, launch_limit,
             repo_count += len(df_chunk)
         # print(df_chunk.dtypes)
 
+    # detect renamed repos
+    # first create the "renamed" column with default 0
+    db[repo_table].add_column("renamed", int, not_null_default=0)
+    # now get rows with same remote id
+    df_renamed = pd.read_sql_query(f"""SELECT remote_id, 
+                                      COUNT(remote_id) AS duplicated, 
+                                      GROUP_CONCAT(DISTINCT id) AS ids 
+                               FROM {repo_table} 
+                               WHERE remote_id IS NOT null 
+                               GROUP BY provider, remote_id
+                               HAVING duplicated > 1;""",
+                           db.conn,
+                           chunksize=chunk_size)
+    # and for that rows set renamed column to 1
+    for index, row in df_renamed.iterrows():
+        logger.info(f'Remote id {row["remote_id"]} is renamed {row["duplicated"]} times: {row["ids"]}')
+        for id_ in row["ids"].split(","):
+            id_ = int(id_.strip())
+            db[repo_table].update(id_, {"renamed": 1})
+
     # optimize the database
     db.vacuum()
     if verbose:
