@@ -144,8 +144,7 @@ async def create_repo_table(db_name, providers, launch_limit,
                                WHERE remote_id IS NOT null 
                                GROUP BY provider, remote_id
                                HAVING duplicated > 1;""",
-                           db.conn,
-                           chunksize=chunk_size)
+                                   db.conn)
     # and for that rows set renamed column to 1
     for index, row in df_renamed.iterrows():
         logger.info(f'Remote id {row["remote_id"]} is renamed {row["duplicated"]} times: {row["ids"]}')
