@@ -67,7 +67,7 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
             # print(log)
     log_dict = json.loads(log)
     print(log_dict)
-    if log_dict["phase"] == "failure":
+    if log_dict["phase"] in ["failure", "failed"]:
         # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
         build_success = 0
     elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
@@ -88,7 +88,9 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
 
     repo_table = "repo"
     db = Database(db_name)
-    where = f"resolved_ref_now!=404 AND launch_count>{launch_limit}"
+    # image_name is null, if repo doesnt exists anymore or there are other error while fetching resolved_ref_now
+    # this also means that fork data is 404 or null
+    where = f"image_name IS NOT null AND launch_count>{launch_limit}"
     if not forks:
         where = f"fork=0 AND " + where
     if "build_success" in db[repo_table].columns_dict:
@@ -179,7 +181,7 @@ def get_args():
     return args
 
 
-if __name__ == '__main__':
+def main():
     args = get_args()
     db_name = args.db_name
     r2d_image = args.r2d_image
@@ -193,3 +195,7 @@ if __name__ == '__main__':
     verbose = args.verbose
 
     build_images(db_name, r2d_image, launch_limit, forks, max_workers, continue_, verbose)
+
+
+if __name__ == '__main__':
+    main()
