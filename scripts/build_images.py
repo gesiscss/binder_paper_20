@@ -67,15 +67,19 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
             # print(log)
     log_dict = json.loads(log)
     print(log_dict)
-    if log_dict["phase"] in ["failure", "failed"]:
+    if log_dict["phase"] == "failure":
+        # failures are from docker build
         # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
         build_success = 0
+    elif log_dict["phase"] == "failed":
+        # Ex: Error during build: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out.  .... "phase": "failed"}
+        build_success = 2
     elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
         # {'message': 'Successfully tagged bp20-binder-2dexamples-2drequirements-55ab5c:11cdea057c300242a30e5c265d8dc79f60f644e1\n', 'phase': 'building'}
         build_success = 1
     else:
         # unknown - look at the log file
-        build_success = 2
+        build_success = 3
     return row_id, build_success
 
 
