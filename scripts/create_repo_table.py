@@ -74,7 +74,7 @@ async def create_repo_table(db_name, providers, launch_limit,
             if access_token:
                 try:
                     # use spec of last launch
-                    spec = row["specs"].split(",")[-1].stip()
+                    spec = row["specs"].split(",")[-1].strip()
                     resolved_ref_now = await get_resolved_ref_now(row["provider"], spec, access_token)
                     df_chunk.at[index, "resolved_ref_now"] = resolved_ref_now
                     if resolved_ref_now and resolved_ref_now != "404":
