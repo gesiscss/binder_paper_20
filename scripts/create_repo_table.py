@@ -6,7 +6,7 @@ from time import sleep
 from tornado.httpclient import HTTPClientError
 from sqlite_utils import Database
 from time import strftime
-from utils import get_repo_data, get_resolved_ref_now, get_image_name, get_logger, GithubException
+from utils import get_repo_data, get_resolved_ref_now, get_image_name, get_logger, GithubException, is_dockerfile_repo
 
 
 async def create_repo_table(db_name, providers, launch_limit,
@@ -24,7 +24,7 @@ async def create_repo_table(db_name, providers, launch_limit,
     # list of columns in the order that we will have in repo table
     columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'refs', 'resolved_refs']
     if access_token:
-        columns.extend(['remote_id', 'fork', 'resolved_ref_now', 'image_name'])
+        columns.extend(['remote_id', 'fork', 'dockerfile', 'resolved_ref_now', 'image_name'])
     if repo_table in db.table_names():
         raise Exception(f"table {repo_table} already exists in {db_name}")
     else:
@@ -32,7 +32,7 @@ async def create_repo_table(db_name, providers, launch_limit,
         repos = db[repo_table]
         # to_sql doesnt support setting pk column
         # that's why here we have to add a temp row and delete it again
-        r = {c: 1 if c in ["id", "launch_count"] else "" for c in columns}
+        r = {c: 1 if c in ["id", "launch_count", "dockerfile"] else "" for c in columns}
         # here we set the pk column
         repos.insert(r, pk="id")
         repos.delete(1)
@@ -63,6 +63,7 @@ async def create_repo_table(db_name, providers, launch_limit,
             df_chunk["fork"] = None
             # there will be repos with same remote_id, because they are renamed
             df_chunk["remote_id"] = None
+            df_chunk["dockerfile"] = None
         rows = df_chunk.iterrows()
         index, row = next(rows)
         len_rows = len(df_chunk)
@@ -76,6 +77,7 @@ async def create_repo_table(db_name, providers, launch_limit,
                     if resolved_ref_now and resolved_ref_now != "404":
                         image_name = get_image_name(row["provider"], row["spec"], image_prefix, resolved_ref_now)
                         df_chunk.at[index, "image_name"] = image_name
+                        df_chunk.at[index, "dockerfile"] = is_dockerfile_repo(["provider"], row["repo_url"], resolved_ref_now)
                     repo_data = await get_repo_data(row["provider"], row["repo_url"], access_token)
                     if repo_data:
                         df_chunk.at[index, "remote_id"] = repo_data.get("remote_id")

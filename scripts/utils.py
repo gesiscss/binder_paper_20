@@ -156,6 +156,60 @@ def get_image_name(provider, spec, image_prefix, ref):
     return image_name
 
 
+def is_dockerfile_repo(provider, repo_url, resolved_ref):
+    if provider not in REPO_PROVIDERS:
+        raise Exception(f"unknown provider: {provider}")
+
+    def _path_exists(url):
+        retry = 1
+        response = None
+        while retry <= 3:
+            try:
+                # allow redirects for renamed repos
+                response = requests.head(url, allow_redirects=True, timeout=retry * retry)
+            except requests.exceptions.Timeout:
+                retry += 1
+            else:
+                # break, if no timeout
+                break
+        if response and response.status_code == 200:
+            return True
+        return False
+
+    if provider in ["GitHub", "Gist"]:
+        full_name = repo_url.split("github.com/")[-1]
+        if provider == "GitHub":
+            # If a Dockerfile is present, all other configuration files will be ignored.
+            # (https://repo2docker.readthedocs.io/en/latest/config_files.html#dockerfile-advanced-environments)
+            # repo2docker searches for these folders in order (binder/, .binder/, root).
+            # Having both ``.binder/`` and ``binder/`` folders is not allowed.
+            # And if one of these folders exists, configuration files in that folder are considered only.
+            # for example this is not a dockerfile repo with files ./Dockerfile and .binder/requirements.txt
+            dockerfile_paths = [["binder", "binder/Dockerfile"], [".binder", ".binder/Dockerfile"], ["", "Dockerfile"]]
+            # url = "https://raw.githubusercontent.com/{full_name}/{resolved_ref}/{dockerfile_path}"
+            url = "https://github.com/{full_name}/tree/{resolved_ref}/{dockerfile_path}"
+            exist = False
+            for dir_, file_path in dockerfile_paths:
+                if dir_ != "":
+                    url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=dir_)
+                    dir_exist = _path_exists(url_)
+                else:
+                    # root dir always exists
+                    dir_exist = True
+                if dir_exist:
+                    url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=file_path)
+                    exist = _path_exists(url_)
+                    break
+        else:
+            dockerfile_path = "Dockerfile"
+            url = "https://gist.githubusercontent.com/{full_name}/raw/{resolved_ref}/{dockerfile_path}"
+            url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=dockerfile_path)
+            exist = _path_exists(url_)
+        return 1 if exist else 0
+    else:
+        return None
+
+
 async def get_repo_data(provider, repo_url, access_token=None):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
@@ -170,7 +224,7 @@ async def get_repo_data(provider, repo_url, access_token=None):
                 repo = g.get_repo(f"{full_name}")
             else:
                 repo = g.get_gist(f'{repo_url.split("/")[-1]}')
-            # we need remote_id to detect renamed repos
+            # we need remote_id to detect renamed repos/users
             repo_data["remote_id"] = repo.id
         except GithubException as e:
             if e.status == 404:
