@@ -22,7 +22,7 @@ async def create_repo_table(db_name, providers, launch_limit,
     repo_table = "repo"
     db = Database(db_name)
     # list of columns in the order that we will have in repo table
-    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'refs', 'resolved_refs']
+    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'specs', 'refs', 'resolved_refs']
     if access_token:
         columns.extend(['remote_id', 'fork', 'dockerfile', 'resolved_ref_now', 'image_name'])
     if repo_table in db.table_names():
@@ -40,10 +40,11 @@ async def create_repo_table(db_name, providers, launch_limit,
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
     chunk_size = 10000
-    df_iter = pd.read_sql_query(f"""SELECT provider, spec, repo_url, 
+    df_iter = pd.read_sql_query(f"""SELECT provider, repo_url, 
                                            COUNT(repo_url) AS launch_count, 
                                            MIN(timestamp) AS first_launch, 
                                            MAX(timestamp) AS last_launch, 
+                                           GROUP_CONCAT(DISTINCT spec) AS specs, 
                                            GROUP_CONCAT(DISTINCT ref) AS refs, 
                                            GROUP_CONCAT(DISTINCT resolved_ref) AS resolved_refs 
                                      FROM {launch_table} 
@@ -72,10 +73,12 @@ async def create_repo_table(db_name, providers, launch_limit,
             df_chunk.at[index, "id"] = id_
             if access_token:
                 try:
-                    resolved_ref_now = await get_resolved_ref_now(row["provider"], row["spec"], access_token)
+                    # use spec of last launch
+                    spec = row["specs"].split(",")[-1].stip()
+                    resolved_ref_now = await get_resolved_ref_now(row["provider"], spec, access_token)
                     df_chunk.at[index, "resolved_ref_now"] = resolved_ref_now
                     if resolved_ref_now and resolved_ref_now != "404":
-                        image_name = get_image_name(row["provider"], row["spec"], image_prefix, resolved_ref_now)
+                        image_name = get_image_name(row["provider"], spec, image_prefix, resolved_ref_now)
                         df_chunk.at[index, "image_name"] = image_name
                         df_chunk.at[index, "dockerfile"] = is_dockerfile_repo(["provider"], row["repo_url"], resolved_ref_now)
                     repo_data = await get_repo_data(row["provider"], row["repo_url"], access_token)
