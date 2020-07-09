@@ -187,7 +187,8 @@ def get_args():
                         help='Build images of forks too. Default is False')
     parser.add_argument('-c', '--cont', required=False, default=False, action='store_true',
                         help='if this script already executed before. default is False')
-    parser.add_argument('-m', '--max_workers', type=int, default=4, help='Default is 4')
+    parser.add_argument('-m', '--max_workers', type=int, default=4, help='Max number of processes to run in parallel. '
+                                                                         'Default is 4')
     parser.add_argument('-v', '--verbose', required=False, default=False, action='store_true',
                         help='default is False')
     args = parser.parse_args()
