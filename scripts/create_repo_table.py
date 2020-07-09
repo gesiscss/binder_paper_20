@@ -22,7 +22,7 @@ async def create_repo_table(db_name, providers, launch_limit,
     repo_table = "repo"
     db = Database(db_name)
     # list of columns in the order that we will have in repo table
-    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'specs', 'refs', 'resolved_refs']
+    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'last_spec', 'refs', 'resolved_refs']
     if access_token:
         columns.extend(['remote_id', 'fork', 'dockerfile', 'resolved_ref_now', 'image_name'])
     if repo_table in db.table_names():
@@ -39,15 +39,26 @@ async def create_repo_table(db_name, providers, launch_limit,
 
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
-    chunk_size = 10000
-    df_iter = pd.read_sql_query(f"""SELECT provider, repo_url, 
-                                           COUNT(repo_url) AS launch_count, 
-                                           MIN(timestamp) AS first_launch, 
-                                           MAX(timestamp) AS last_launch, 
-                                           GROUP_CONCAT(DISTINCT spec) AS specs, 
-                                           GROUP_CONCAT(DISTINCT ref) AS refs, 
-                                           GROUP_CONCAT(DISTINCT resolved_ref) AS resolved_refs 
-                                     FROM {launch_table} 
+    chunk_size = 5000
+    # NOTE: this query orders launch table by timestamp and creates a temporary table t
+    # and this temporary table is used to select and also to concat specs, so we have specs in time order and
+    # we can use the last launched one to fetch resolved_ref_now
+    # BUT sqlite docs (https://www.sqlite.org/lang_aggfunc.html#groupconcat) says
+    # GROUP_CONCAT: The order of the concatenated elements is arbitrary.
+    # that's why first we concat timestamp and spec (ts_spec) and then concat all ts_specs of a repo
+    # later we will sort and get last launched spec
+    df_iter = pd.read_sql_query(f"""SELECT t.provider AS provider, t.repo_url AS repo_url, 
+                                           COUNT(t.repo_url) AS launch_count, 
+                                           MIN(t.timestamp) AS first_launch, 
+                                           MAX(t.timestamp) AS last_launch, 
+                                           GROUP_CONCAT(DISTINCT t.ts_spec) AS ts_specs, 
+                                           GROUP_CONCAT(DISTINCT t.ref) AS refs, 
+                                           GROUP_CONCAT(DISTINCT t.resolved_ref) AS resolved_refs 
+                                     FROM (SELECT provider, repo_url, timestamp, 
+                                                  (timestamp || ";" || spec) AS ts_spec, 
+                                                  ref, resolved_ref 
+                                           FROM {launch_table} 
+                                           ORDER BY timestamp) AS t 
                                      WHERE provider IN ({", ".join(providers)}) 
                                      GROUP BY repo_url 
                                      HAVING launch_count > {launch_limit} 
@@ -65,20 +76,26 @@ async def create_repo_table(db_name, providers, launch_limit,
             # there will be repos with same remote_id, because they are renamed
             df_chunk["remote_id"] = None
             df_chunk["dockerfile"] = None
+        # column for last launched spec
+        df_chunk["last_spec"] = None
         rows = df_chunk.iterrows()
         index, row = next(rows)
         len_rows = len(df_chunk)
         retry = 3
         while True:
             df_chunk.at[index, "id"] = id_
+            # use spec of last launch for resolved_ref_now
+            ts_specs = [ts_spec.split(";") for ts_spec in row["ts_specs"].split(",")]
+            # sort by first element, which is timestamp
+            ts_specs = sorted(ts_specs, key=lambda x: x[0])
+            last_spec = ts_specs[-1][1]
+            df_chunk.at[index, "last_spec"] = last_spec
             if access_token:
                 try:
-                    # use spec of last launch
-                    spec = row["specs"].split(",")[-1].strip()
-                    resolved_ref_now = await get_resolved_ref_now(row["provider"], spec, access_token)
+                    resolved_ref_now = await get_resolved_ref_now(row["provider"], last_spec, access_token)
                     df_chunk.at[index, "resolved_ref_now"] = resolved_ref_now
                     if resolved_ref_now and resolved_ref_now != "404":
-                        image_name = get_image_name(row["provider"], spec, image_prefix, resolved_ref_now)
+                        image_name = get_image_name(row["provider"], last_spec, image_prefix, resolved_ref_now)
                         df_chunk.at[index, "image_name"] = image_name
                         df_chunk.at[index, "dockerfile"] = is_dockerfile_repo(row["provider"], row["repo_url"], resolved_ref_now)
                     repo_data = await get_repo_data(row["provider"], row["repo_url"], access_token)
