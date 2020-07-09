@@ -166,7 +166,7 @@ def is_dockerfile_repo(provider, repo_url, resolved_ref):
         while retry <= 3:
             try:
                 # allow redirects for renamed repos
-                response = requests.head(url, allow_redirects=True, timeout=retry * retry)
+                response = requests.head(url, allow_redirects=True, timeout=retry)
             except requests.exceptions.Timeout:
                 retry += 1
             else:
