@@ -2,7 +2,7 @@ import docker
 import argparse
 import json
 import os
-from utils import get_repo2docker_image, get_logger
+from utils import get_repo2docker_image, get_logger, REPO_TABLE as repo_table
 from time import strftime
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
@@ -83,20 +83,19 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
     return row_id, build_success
 
 
-def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1, continue_=False, verbose=False):
+def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=False, max_workers=1, continue_=False, verbose=False):
     if verbose:
         start_time = datetime.now()
         print(f"building images, started at {start_time}")
-        repo_count = 0
-        repo_count_ = 0
 
-    repo_table = "repo"
     db = Database(db_name)
     # image_name is null, if repo doesnt exists anymore or there are other error while fetching resolved_ref_now
     # this also means that fork data is 404 or null
     where = f"image_name IS NOT null AND launch_count>{launch_limit}"
     if not forks:
         where = f"fork=0 AND " + where
+    if not dockerfiles:
+        where = f"dockerfile=0 AND " + where
     if "build_success" in db[repo_table].columns_dict:
         if continue_:
             where += " AND build_success IS null"
@@ -106,6 +105,9 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
                             f"Or if you want to re-process everything, "
                             f"you could rename `build_success` column manually, "
                             f"e.g. `ALTER TABLE {repo_table} RENAME COLUMN build_success to build_success_old;`")
+    if verbose:
+        jobs_created = 0
+        jobs_done = 0
     rows = db[repo_table].rows_where(where)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         logger_name = f'build_images_at_{strftime("%Y_%m_%d_%H_%M_%S")}'.replace("-", "_")
@@ -117,6 +119,7 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
         while True:
             # print(row)
             if row:
+                # TODO before each job, check available disk size for docker and warn user
                 renamed = int(row["renamed"]) == 1
                 if renamed and row["remote_id"] in renamed_processed:
                     logger.info(f'Renamed repo, skipping: {row["id"]}: {row["repo_url"]}')
@@ -132,7 +135,7 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
                                                        log_folder=log_folder)
                     jobs[job] = f'{row["id"]}:{row["repo_url"]}'
                     if verbose:
-                        repo_count += 1
+                        jobs_created += 1
 
             # limit number of jobs with max_workers
             if len(jobs) == max_workers or not row:
@@ -144,8 +147,8 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
                         db[repo_table].update(row_id, {"build_success": build_success}, alter=True)
                         logger.info(f"{row_id}: build success: {build_success}")
                         if verbose:
-                            repo_count_ += 1
-                            print(f"{repo_count_} repos are processed")
+                            jobs_done += 1
+                            print(f"{jobs_done} repos are processed")
                     except Exception as exc:
                         logger.exception(f"{id_repo_url}")
 
@@ -162,35 +165,52 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, max_workers=1,
                     break
                 row = None
 
+    # prune dangling (unused and untagged) images
+    client.images.prune(filters={"dangling": True})
+
     # optimize the database
     db.vacuum()
     if verbose:
         end_time = datetime.now()
-        print(f"images are built for {repo_count} ({repo_count_}) repos")
+        print(f"images are built for {jobs_created} ({jobs_done}) repos")
         print(f"finished at {end_time}")
-        print(f"duration: {end_time - start_time}")
+        duration = f"duration: {end_time - start_time}"
+        print(duration)
+        logger.info(duration)
 
 
 def get_args():
-    # TODO desc
-    parser = argparse.ArgumentParser(description='.')
+    parser = argparse.ArgumentParser(description=f'This script runs repo2docker to build images of repos in {repo_table} table. '
+                                                 f'By default it excludes repos that do no exist anymore and '
+                                                 f'also repos with invalid spec (the spec of last launch). '
+                                                 f'To exclude more repos check --forks, --dockerfiles '
+                                                 f'and --launch_limit flags. '
+                                                 f'It builds images of renamed repos only 1 time.',
+                                     formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-n', '--db_name', required=True)
     parser.add_argument('-r', '--r2d_image', required=False,
                         help='Full image name of the repo2docker to be used for image building, '
                              'such as "jupyter/repo2docker:0.11.0-98.g8bbced7" '
-                             '(https://hub.docker.com/r/jupyter/repo2docker).'
+                             '(https://hub.docker.com/r/jupyter/repo2docker).\n'
                              'Default is what is currently used in mybinder.org')
     parser.add_argument('-l', '--launch_limit', type=int, default=0,
-                        help='Minimum number of launches for a repo to be built. '
+                        help='Minimum number of launches that a repo must have to be built.\n'
                              'Default is 0, which means build images all repos.')
     parser.add_argument('-f', '--forks', required=False, default=False, action='store_true',
-                        help='Build images of forks too. Default is False')
+                        help='Build images of forked repos too. Default is False.')
+    parser.add_argument('-d', '--dockerfiles', required=False, default=False, action='store_true',
+                        help='Build images of dockerfile repos too. Default is False.')
+    # parser.add_argument('-r', '--renamed', required=False, default=False, action='store_true',
+    #                     help='Build images of all renamed repos too. '
+    #                          'Default is False, which means image is built one time for renamed repos')
     parser.add_argument('-c', '--cont', required=False, default=False, action='store_true',
-                        help='if this script already executed before. default is False')
+                        help='If this script already executed before and interrupted for some reason, '
+                             'you can use this flag to continue building images of repos which are not '
+                             'processed last time.\nDefault is False.')
     parser.add_argument('-m', '--max_workers', type=int, default=4, help='Max number of processes to run in parallel. '
-                                                                         'Default is 4')
+                                                                         'Default is 4.')
     parser.add_argument('-v', '--verbose', required=False, default=False, action='store_true',
-                        help='default is False')
+                        help='Default is False.')
     args = parser.parse_args()
     return args
 
@@ -204,11 +224,12 @@ def main():
     print(f"Using {r2d_image}")
     launch_limit = args.launch_limit
     forks = args.forks
+    dockerfiles = args.dockerfiles
     continue_ = args.cont
     max_workers = args.max_workers
     verbose = args.verbose
 
-    build_images(db_name, r2d_image, launch_limit, forks, max_workers, continue_, verbose)
+    build_images(db_name, r2d_image, launch_limit, forks, dockerfiles, max_workers, continue_, verbose)
 
 
 if __name__ == '__main__':

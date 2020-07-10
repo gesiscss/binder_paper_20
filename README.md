@@ -29,7 +29,7 @@ repo_url |
 
 2. [create_repo_table.py](scripts/create_repo_table.py)
 
-Reads output of first script (`mybinderlaunch` table) and creates a `repo` table. 
+Reads output of the first script (`mybinderlaunch` table) and creates a `repo` table. 
 For more information please run `python create_repo_table.py --help`.
 
 `repo` table:
@@ -41,7 +41,8 @@ remote_id | repo id in GitHub, this is used to detect renamed repos
 renamed | 1 or 0, if repo is renamed or not
 fork | 1 or 0, if repo is forked or not
 dockerfile | 1 or 0, if repo is dockerfile repo or not
-resolved_ref_now | current resolved ref of the spec
+resolved_ref_now | current resolved ref of the last launched spec
+last_spec | 
 image_name | 
 repo_url | 
 provider | 
@@ -53,11 +54,11 @@ resolved_refs |
 
 3. [build_images.py](scripts/build_images.py)
 
-Runs `repo2docer` to build images of repos in `repo` table. 
+Runs `repo2docker` to build images of repos in `repo` table. 
 And adds a new column `build_success` into `repo` table. 
 For more information please run `python build_images.py --help`.
 
-4. TODO analyse_images.py
+4. TODO run_images.py
 
 Run each image from previous step and check
 

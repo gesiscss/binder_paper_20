@@ -12,6 +12,11 @@ from binderhub.repoproviders import strip_suffix, GitHubRepoProvider, GitRepoPro
      GitLabRepoProvider, GistRepoProvider, ZenodoProvider, FigshareProvider, \
      HydroshareProvider, DataverseProvider
 
+LAUNCH_TABLE = "mybinderlaunch"
+REPO_TABLE = "repo"
+DEFAULT_IMAGE_PREFIX = "bp20-"
+
+
 REPO_PROVIDERS = {
     'GitHub': GitHubRepoProvider,
     'Gist': GistRepoProvider,
@@ -157,6 +162,13 @@ def get_image_name(provider, spec, image_prefix, ref):
 
 
 def is_dockerfile_repo(provider, repo_url, resolved_ref):
+    """Detects if a repo uses Dockerfile as binder config.
+    This function makes head requests to the possible locations of Dockerfiles and
+    if the page exists (status code), this means the repo is dockerfile repo.
+    Another possibility is to make requests to GitHub API,
+    but because of rate limit `create_repo_table.py` script waits ~30 mins per hour,
+    so we decided to do it this way and use time more efficiently.
+    """
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
 
@@ -210,7 +222,7 @@ def is_dockerfile_repo(provider, repo_url, resolved_ref):
         return None
 
 
-async def get_repo_data(provider, repo_url, access_token=None):
+async def get_repo_data_from_github_api(provider, repo_url, access_token=None):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
 
