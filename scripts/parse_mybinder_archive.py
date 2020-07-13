@@ -143,8 +143,8 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
         print("now creating indexes")
 
     # create indexes on launch table
-    columns_to_index = ["timestamp", "origin", "provider", "resolved_ref", "ref", "repo_url"]
-    db[launch_table].create_index(columns_to_index)
+    # columns_to_index = ["timestamp", "origin", "provider", "resolved_ref", "ref", "repo_url"]
+    # db[launch_table].create_index(columns_to_index)
     # optimize the database
     db.vacuum()
 
