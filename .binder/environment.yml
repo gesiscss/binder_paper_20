@@ -2,4 +2,5 @@ name: bp20
 dependencies:
   - python=3.7
   - pandas=1.0.*
-  - sqlite-utils=2.10.*
+  - pip:
+    - sqlite-utils==2.11.*
