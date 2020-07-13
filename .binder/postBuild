@@ -1,0 +1,1 @@
+wget -q -O analysis/mybinder_archive.db "https://gesisbox.gesis.org/index.php/s/3ZKSqEk36n9AXya/download"
