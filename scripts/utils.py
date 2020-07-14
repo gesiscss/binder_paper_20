@@ -184,9 +184,12 @@ def is_dockerfile_repo(provider, repo_url, resolved_ref):
             else:
                 # break, if no timeout
                 break
-        if response and response.status_code == 200:
-            return True
-        return False
+        if response:
+            if response.status_code == 200:
+                return True
+            return False
+        # None means that we couldnt fetch it because of timeout, probably github is down
+        return None
 
     if provider in ["GitHub", "Gist"]:
         full_name = repo_url.split("github.com/")[-1]
@@ -217,6 +220,9 @@ def is_dockerfile_repo(provider, repo_url, resolved_ref):
             url = "https://gist.githubusercontent.com/{full_name}/raw/{resolved_ref}/{dockerfile_path}"
             url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=dockerfile_path)
             exist = _path_exists(url_)
+        if exist is None:
+            # currently not available
+            return None
         return 1 if exist else 0
     else:
         return None
