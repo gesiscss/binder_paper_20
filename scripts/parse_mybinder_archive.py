@@ -47,7 +47,6 @@ def _handle_exceptions_in_archve(df, a_name):
         df.loc[df['spec'] == "vingkan/25c74b0e1ea87110a740a9c29a901200", "provider"] = "Gist"
     elif a_name == "events-2019-03-07.jsonl":
         df.loc[df['spec'] == "bitnik/2b5b3ad303859663b222fa5a6c2d3726", "provider"] = "Gist"
-    return df
 
 
 def parse_archive(archive_date, db_name):
@@ -63,7 +62,7 @@ def parse_archive(archive_date, db_name):
     df = df.drop(["schema", "status"], axis=1)
 
     # handle exceptions in events archive
-    df = _handle_exceptions_in_archve(df, a_name)
+    _handle_exceptions_in_archve(df, a_name)
 
     # rename ref to resolved_ref, we will get ref from spec
     # resolved ref is the one which is passed to repo2docker for build
@@ -87,18 +86,14 @@ def parse_archive(archive_date, db_name):
 
 
 def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose=False):
+    start_time = datetime.now()
     if verbose:
-        start_time = datetime.now()
         print(f"parsing started at {start_time}")
-    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-    end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-    assert start_date <= end_date, f"start_date: {start_date}, end_date: {end_date}"
 
     one_day = timedelta(days=1)
     current_date = start_date
-    if verbose:
-        counter = 0
-        total_events = 0
+    counter = 0
+    total_events = 0
 
     db = Database(db_name)
     if launch_table in db.table_names():
@@ -118,8 +113,7 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
                 job = executor.submit(parse_archive, current_date, db_name)
                 jobs[job] = str(current_date)
                 current_date += one_day
-                if verbose:
-                    counter += 1
+                counter += 1
                 # limit number of jobs with max_workers
                 if len(jobs) == max_workers:
                     break
@@ -128,9 +122,11 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
                 current_date_ = jobs[job]
                 try:
                     df_len = job.result()
+                    total_events += df_len
+                    msg = f"{current_date_}: {df_len} events"
                     if verbose:
-                        total_events += df_len
-                        print(f"{current_date_}: {df_len} events")
+                        print(msg)
+                    logger.info(msg)
                 except Exception as exc:
                     logger.exception(f"Archive {current_date_}")
 
@@ -138,9 +134,10 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
                 # break to add a new job, if there is any
                 break
 
+    msg = f"{counter} files are parsed and {total_events} events are saved into the database"
     if verbose:
-        print(f"{counter} files are parsed and {total_events} events are saved into the database")
-        print("now creating indexes")
+        print(msg)
+    logger.info(msg)
 
     # create indexes on launch table
     # columns_to_index = ["timestamp", "origin", "provider", "resolved_ref", "ref", "repo_url"]
@@ -148,12 +145,12 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
     # optimize the database
     db.vacuum()
 
+    end_time = datetime.now()
+    msg = f"duration: {end_time-start_time}"
     if verbose:
-        end_time = datetime.now()
         print(f"parsing finished at {end_time}")
-        duration = f"duration: {end_time-start_time}"
-        print(duration)
-        logger.info(duration)
+        print(msg)
+    logger.info(msg)
 
 
 def get_args():
@@ -187,6 +184,12 @@ def main():
     args = get_args()
     start_date = args.start_date
     end_date = args.end_date
+
+    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+    end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+    if start_date > end_date:
+        raise Exception(f"Start date cant be later then end date: start_date: {start_date}, end_date: {end_date}")
+
     db_name = args.db_name
     db_name = f'{db_name}_at_{strftime("%Y_%m_%d_%H_%M_%S")}.db'.replace("-", "_")
     max_workers = args.max_workers
