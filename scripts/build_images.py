@@ -83,9 +83,10 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
     return row_id, build_success
 
 
-def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=False, max_workers=1, repo_limit=0, continue_=False, verbose=False):
+def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=False, max_workers=1,
+                 repo_limit=0, continue_=False, verbose=False):
+    start_time = datetime.now()
     if verbose:
-        start_time = datetime.now()
         print(f"building images, started at {start_time}")
 
     db = Database(db_name)
@@ -143,10 +144,12 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=Fa
                         row_id, build_success = job.result()
                         # update row with build info
                         db[repo_table].update(row_id, {"build_success": build_success}, alter=True)
-                        logger.info(f"{row_id}: build success: {build_success}")
+                        logger.info(f"{id_repo_url}: build success: {build_success}")
                         jobs_done += 1
+                        msg = f"{jobs_done} repos are processed"
+                        logger.info(msg)
                         if verbose:
-                            print(f"{jobs_done} repos are processed")
+                            print(msg)
                     except Exception as exc:
                         logger.exception(f"{id_repo_url}")
 
@@ -168,13 +171,13 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=Fa
 
     # optimize the database
     db.vacuum()
+    end_time = datetime.now()
+    msg = f"images are built for {jobs_created} ({jobs_done}) repos"
+    msg += f"\nduration: {end_time - start_time}"
     if verbose:
-        end_time = datetime.now()
-        print(f"images are built for {jobs_created} ({jobs_done}) repos")
         print(f"finished at {end_time}")
-        duration = f"duration: {end_time - start_time}"
-        print(duration)
-        logger.info(duration)
+        print(msg)
+    logger.info(msg)
 
 
 def get_args():
