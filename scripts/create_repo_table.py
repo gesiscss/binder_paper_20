@@ -50,16 +50,16 @@ async def create_repo_table(db_name, providers, launch_limit,
                             image_prefix, access_token=None, verbose=False):
     logger_name = f'create_repo_table_at_{strftime("%Y_%m_%d_%H_%M_%S")}'.replace("-", "_")
     logger = get_logger(logger_name)
+    start_time = datetime.now()
+    repo_count = 0
     if verbose:
-        start_time = datetime.now()
         print(f"creating repo table, started at {start_time}")
-        repo_count = 0
 
     db = Database(db_name)
     # list of columns in the order that we will have in repo table
     columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'last_spec', 'refs', 'resolved_refs']
     if access_token:
-        columns.extend(['remote_id', 'fork', 'dockerfile', 'resolved_ref_now', 'image_name'])
+        columns.extend(['remote_id', 'fork', 'renamed', 'resolved_ref_now', 'image_name', 'dockerfile'])
     if repo_table in db.table_names():
         raise Exception(f"table {repo_table} already exists in {db_name}")
     else:
@@ -67,7 +67,10 @@ async def create_repo_table(db_name, providers, launch_limit,
         repos = db[repo_table]
         # to_sql doesnt support setting pk column
         # that's why here we have to add a temp row and delete it again
-        r = {c: 1 if c in ["id", "launch_count", "dockerfile"] else "" for c in columns}
+        # set 1 for int columns and "" for text ones
+        # remote_id is not int, because for gist repos it is commit hash
+        int_columns = ["id", "fork", "renamed", "dockerfile", "launch_count"]
+        r = {c: 1 if c in int_columns else "" for c in columns}
         # here we set the pk column
         repos.insert(r, pk="id")
         repos.delete(1)
@@ -78,12 +81,13 @@ async def create_repo_table(db_name, providers, launch_limit,
         df_chunk["id"] = 0
         if access_token:
             # fetch additional data from GitHub API
-            df_chunk["image_name"] = None
             df_chunk["resolved_ref_now"] = None
-            df_chunk["fork"] = None
+            df_chunk["image_name"] = None
+            df_chunk["dockerfile"] = None
             # there will be repos with same remote_id, because they are renamed
             df_chunk["remote_id"] = None
-            df_chunk["dockerfile"] = None
+            df_chunk["fork"] = None
+            df_chunk["renamed"] = None
         # column for last launched spec
         df_chunk["last_spec"] = None
         rows = df_chunk.iterrows()
@@ -107,8 +111,8 @@ async def create_repo_table(db_name, providers, launch_limit,
                         df_chunk.at[index, "dockerfile"] = is_dockerfile_repo(row["provider"], row["repo_url"], resolved_ref_now)
                     repo_data = await get_repo_data_from_github_api(row["provider"], row["repo_url"], access_token)
                     if repo_data:
-                        df_chunk.at[index, "remote_id"] = repo_data.get("remote_id")
                         df_chunk.at[index, "fork"] = repo_data.get("fork")
+                        df_chunk.at[index, "remote_id"] = repo_data.get("remote_id")
                 except ValueError as e:
                     minutes_until_reset = e.args[0].split(" minutes")[0].split()[-1].strip()
                     minutes_until_reset = int(minutes_until_reset)
@@ -158,15 +162,12 @@ async def create_repo_table(db_name, providers, launch_limit,
         df_chunk.set_index('id', inplace=True)
         df_chunk.to_sql(repo_table, con=db.conn, if_exists="append", index=True)
 
-        if verbose:
-            repo_count += len(df_chunk)
+        repo_count += len(df_chunk)
         # print(df_chunk.dtypes)
 
     if access_token:
         # detect renamed repos
-        # first create the "renamed" column with default 0
-        db[repo_table].add_column("renamed", int, not_null_default=0)
-        # now get rows with same remote id
+        # get rows with same remote id
         df_renamed = pd.read_sql_query(f"""SELECT remote_id, 
                                           COUNT(remote_id) AS duplicated, 
                                           GROUP_CONCAT(DISTINCT id) AS ids 
@@ -182,15 +183,20 @@ async def create_repo_table(db_name, providers, launch_limit,
                 id_ = int(id_.strip())
                 db[repo_table].update(id_, {"renamed": 1})
 
+        # and set renamed as 0 for the rest of the repos which still exists
+        # for non-existing repos it will stay as None (default)
+        db.conn.execute(f"UPDATE {repo_table} SET renamed=0 WHERE fork IN (0, 1) AND (renamed!=1 OR renamed IS null);")
+        db.conn.commit()
+
     # optimize the database
     db.vacuum()
+    end_time = datetime.now()
+    msg = f"repo table is created with {repo_count} entries"
+    msg += f"\nduration: {end_time - start_time}"
     if verbose:
-        end_time = datetime.now()
-        print(f"repo table is created with {repo_count} entries")
         print(f"finished at {end_time}")
-        duration = f"duration: {end_time - start_time}"
-        print(duration)
-        logger.info(duration)
+        print(msg)
+    logger.info(msg)
 
 
 def get_args():
@@ -202,11 +208,6 @@ def get_args():
                                                  f'\n\tpython create_repo_table.py -v -n example.db',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-n', '--db_name', required=True)
-    # parser.add_argument('-k', '--fork', required=False, default=False, action='store_true',
-    #                     help='Adds a column which indicates if a repo is a fork or not. Implemented only for GitHub. '
-    #                          'Setting this flag will increase time of this script '
-    #                          'because this requires requests to GitHub API which has a low rate limit '
-    #                          '(see --access_token). Default is False.')
     parser.add_argument('-t', '--access_token', required=False,
                         help='Access token for GitHub API. If access token is not provided, '
                              'these additional data will not be fetched: '
