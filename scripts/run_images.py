@@ -4,14 +4,13 @@ This script is WIP!
 import docker
 import argparse
 import os
+from docker.errors import APIError
 from utils import get_logger, REPO_TABLE as repo_table
 from time import strftime
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
 from sqlite_utils import Database
-
-client = docker.from_env()
 
 
 def run_image(image_name, row_id, log_folder="logs"):
@@ -20,6 +19,11 @@ def run_image(image_name, row_id, log_folder="logs"):
     command = ["python3", f"/{output_dir_name}/analyse_notebooks.py"]
     current_dir_name = os.path.dirname(os.path.realpath(__file__))
     output_dir = os.path.join(current_dir_name, output_dir_name)
+
+    # default timeout is 60 seconds
+    # NOTE: this timeout has no effect on the client that repo2docker works with inside the build container
+    # client = docker.from_env(timeout=120)
+    client = docker.from_env()
     container = client.containers.run(
         image=image_name,
         command=command,
@@ -28,13 +32,12 @@ def run_image(image_name, row_id, log_folder="logs"):
             "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
             f"{output_dir}": {"bind": f"/{output_dir_name}", "mode": "rw"},
         },
-        # TODO what is the difference of autoremove and remove?
-        # auto_remove=True,
-        remove=True,  # Remove the container when it has finished running
+        # use detach and auto_remove together
+        # https://github.com/docker/docker-py/blob/master/docker/models/containers.py#L788-L790
         detach=True,  # Run container in the background and return a Container object
+        auto_remove=True,  # enable auto-removal of the container on daemon side when the container’s process exits.
+        # remove=True,  # Remove the container when it has finished running
     )
-    if not os.path.exists(log_folder):
-        os.mkdir(log_folder)
     log_file_name = f"{row_id}-{image_name.split(':')[0]}.log"
     with open(os.path.join(log_folder, log_file_name), 'wb') as log_file:
         contains_nbs = None
@@ -46,6 +49,14 @@ def run_image(image_name, row_id, log_folder="logs"):
             if "contains_nbs" in log:
                 log_dict = eval(log)
                 contains_nbs = int(log_dict["contains_nbs"])
+
+    # ensure that container is removed
+    try:
+        # Remove this container. Similar to the docker rm command.
+        container.remove(force=True)
+    except APIError:
+        # removal is already in progress
+        pass
     return row_id, contains_nbs
 
 
@@ -75,6 +86,7 @@ def run_images(db_name, max_workers=1, continue_=False, verbose=False):
         logger = get_logger(logger_name)
         jobs = {}
         log_folder = logger_name+"_logs"
+        os.mkdir(log_folder)
         row = next(rows)
         while True:
             # print(row)

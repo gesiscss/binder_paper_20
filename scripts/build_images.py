@@ -2,14 +2,14 @@ import docker
 import argparse
 import json
 import os
+from docker.errors import APIError
+# from requests import ReadTimeout
 from utils import get_repo2docker_image, get_logger, REPO_TABLE as repo_table
 from time import strftime
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
 from sqlite_utils import Database
-
-client = docker.from_env()
 
 
 def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
@@ -37,6 +37,11 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
     if push:
         cmd.append("--push")
     cmd.append(repo)
+
+    # default timeout is 60 seconds
+    # NOTE: this timeout has no effect on the client that repo2docker works with inside the build container
+    # client = docker.from_env(timeout=120)
+    client = docker.from_env()
     # TODO add memory, cpu limit to this build container?
     # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
     container = client.containers.run(
@@ -54,11 +59,12 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
         volumes={
             "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
         },
+        # use detach and auto_remove together
+        # https://github.com/docker/docker-py/blob/master/docker/models/containers.py#L788-L790
         detach=True,  # Run container in the background and return a Container object
-        remove=True,  # Remove the container when it has finished running
+        auto_remove=True,  # enable auto-removal of the container on daemon side when the container’s process exits.
+        # remove=True,  # Remove the container when it has finished running
     )
-    if not os.path.exists(log_folder):
-        os.mkdir(log_folder)
     log_file_name = f"{row_id}-{image_name.split(':')[0]}.log"
     with open(os.path.join(log_folder, log_file_name), 'wb') as log_file:
         for log in container.logs(stream=True):
@@ -80,6 +86,14 @@ def build_image(r2d_image, repo, ref, image_name, row_id, log_folder="logs"):
     else:
         # unknown - look at the log file
         build_success = 3
+
+    # auto_remove doesnt always remove the container, for example when r2d build fails with timeout
+    try:
+        # Remove this container. Similar to the docker rm command.
+        container.remove(force=True)
+    except APIError:
+        # removal is already in progress
+        pass
     return row_id, build_success
 
 
@@ -115,6 +129,7 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=Fa
         renamed_processed = set()
         jobs = {}
         log_folder = logger_name+"_logs"
+        os.mkdir(log_folder)
         row = next(rows)
         while True:
             # print(row)
@@ -166,8 +181,14 @@ def build_images(db_name, r2d_image, launch_limit=0, forks=False, dockerfiles=Fa
                     break
                 row = None
 
-    # prune dangling (unused and untagged) images
-    client.images.prune(filters={"dangling": True})
+    # # prune dangling (unused and untagged) images
+    # prune_timout = 600
+    # client = docker.from_env(timeout=prune_timout)
+    # try:
+    #     client.images.prune(filters={"dangling": True})
+    # except ReadTimeout:
+    #     print(f"Timeout ({prune_timout}) for pruning dangling images. "
+    #           f"If you want to do this manually, run `docker image prune`")
 
     # optimize the database
     db.vacuum()
@@ -235,6 +256,13 @@ def main():
     verbose = args.verbose
 
     build_images(db_name, r2d_image, launch_limit, forks, dockerfiles, max_workers, repo_limit, continue_, verbose)
+    print(f"""\n
+    Building images is done.
+    You could now open the database with `sqlite3 {db_name}` command and 
+    then run `select build_success, count(*) from repo group by "build_success";` 
+    to see how many repos are built successfully or not.
+    You could also run `docker image prune` to delete dangling (unused and untagged) images.
+    """)
 
 
 if __name__ == '__main__':
