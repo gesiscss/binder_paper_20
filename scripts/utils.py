@@ -184,7 +184,7 @@ def is_dockerfile_repo(provider, repo_url, resolved_ref):
             else:
                 # break, if no timeout
                 break
-        if response:
+        if response is not None:
             if response.status_code == 200:
                 return True
             return False
