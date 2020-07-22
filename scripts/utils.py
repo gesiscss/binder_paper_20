@@ -14,10 +14,24 @@ from sqlite_utils import Database
 from binderhub.repoproviders import strip_suffix, GitHubRepoProvider, GitRepoProvider, \
      GitLabRepoProvider, GistRepoProvider, ZenodoProvider, FigshareProvider, \
      HydroshareProvider, DataverseProvider
+from repo2docker.buildpacks import CondaBuildPack, DockerBuildPack, JuliaProjectTomlBuildPack, JuliaRequireBuildPack, \
+    LegacyBinderDockerBuildPack, NixBuildPack, PipfileBuildPack, PythonBuildPack, RBuildPack
+from repo2docker.utils import chdir
 
 LAUNCH_TABLE = "mybinderlaunch"
 REPO_TABLE = "repo"
 DEFAULT_IMAGE_PREFIX = "bp20-"
+BUILDPACKS = [
+    LegacyBinderDockerBuildPack,
+    DockerBuildPack,
+    JuliaProjectTomlBuildPack,
+    JuliaRequireBuildPack,
+    NixBuildPack,
+    RBuildPack,
+    CondaBuildPack,
+    PipfileBuildPack,
+    PythonBuildPack
+]
 
 
 REPO_PROVIDERS = {
@@ -107,12 +121,12 @@ async def get_resolved_ref_now(provider, spec, access_token=None):
     if provider in ["GitHub", "Gist"]:
         provider = REPO_PROVIDERS[provider](spec=spec)
         provider.access_token = access_token
-        resolved_ref_now = await provider.get_resolved_ref()
-        if resolved_ref_now is None:
+        resolved_ref = await provider.get_resolved_ref()
+        if resolved_ref is None:
             # resolved ref not found
             return "404"
         else:
-            return resolved_ref_now
+            return resolved_ref
     else:
         return None
 
@@ -157,71 +171,71 @@ def get_image_name(provider, spec, image_prefix):
     return image_name
 
 
-def is_dockerfile_repo(provider, repo_url, resolved_ref):
-    """Detects if a repo uses Dockerfile as binder config.
-    This function makes head requests to the possible locations of Dockerfiles and
-    if the page exists (status code), this means the repo is dockerfile repo.
-    Another possibility is to make requests to GitHub API,
-    but because of rate limit `create_repo_table.py` script waits ~30 mins per hour,
-    so we decided to do it this way and use time more efficiently.
+def git_execute(command, cwd=None):
+    result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+    if result.returncode:
+        raise Exception(f"{command}: {result.stderr}")
+    return result
+
+
+def get_repo_data_from_git(repo_url, resolved_ref):
     """
-    if provider not in REPO_PROVIDERS:
-        raise Exception(f"unknown provider: {provider}")
+    - get commit date of resolved ref from git history
+    - use repo2docker to detect binder_dir and buildpack
+    """
+    repo_data = {}
+    with tempfile.TemporaryDirectory() as tmp_dir_path:
+        command = ["git", "clone", repo_url, tmp_dir_path]
+        result = git_execute(command)
 
-    def _path_exists(url):
-        retry = 1
-        response = None
-        while retry <= 3:
-            try:
-                # allow redirects for renamed repos
-                response = requests.head(url, allow_redirects=True, timeout=retry)
-            except requests.exceptions.Timeout:
-                retry += 1
+        # check if resolved ref exists in repo
+        # it is possible that a commit, which is launched, is removed from history
+        # ex: https://github.com/vaughnkoch/test1 and
+        # https://github.com/vaughnkoch/test1/commit/464062f227e35eea5d01e138b83bb01912587060
+        command = ["git", "cat-file", "-t", resolved_ref]
+        try:
+            git_execute(command, tmp_dir_path)
+        except Exception as e:
+            if e.args[0].strip().endswith("fatal: git cat-file: could not get object info"):
+                repo_data["resolved_ref_date"] = "404"
+                repo_data["binder_dir"] = "404"
+                repo_data["buildpack"] = "404"
             else:
-                # break, if no timeout
-                break
-        if response is not None:
-            if response.status_code == 200:
-                return True
-            return False
-        # None means that we couldnt fetch it because of timeout, probably github is down
-        return None
-
-    if provider in ["GitHub", "Gist"]:
-        full_name = repo_url.split("github.com/")[-1]
-        if provider == "GitHub":
-            # If a Dockerfile is present, all other configuration files will be ignored.
-            # (https://repo2docker.readthedocs.io/en/latest/config_files.html#dockerfile-advanced-environments)
-            # repo2docker searches for these folders in order (binder/, .binder/, root).
-            # Having both ``.binder/`` and ``binder/`` folders is not allowed.
-            # And if one of these folders exists, configuration files in that folder are considered only.
-            # for example this is not a dockerfile repo with files ./Dockerfile and .binder/requirements.txt
-            dockerfile_paths = [["binder", "binder/Dockerfile"], [".binder", ".binder/Dockerfile"], ["", "Dockerfile"]]
-            # url = "https://raw.githubusercontent.com/{full_name}/{resolved_ref}/{dockerfile_path}"
-            url = "https://github.com/{full_name}/tree/{resolved_ref}/{dockerfile_path}"
-            exist = False
-            for dir_, file_path in dockerfile_paths:
-                if dir_ != "":
-                    url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=dir_)
-                    dir_exist = _path_exists(url_)
-                else:
-                    # root dir always exists
-                    dir_exist = True
-                if dir_exist:
-                    url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=file_path)
-                    exist = _path_exists(url_)
-                    break
+                raise e
         else:
-            dockerfile_path = "Dockerfile"
-            url = "https://gist.githubusercontent.com/{full_name}/raw/{resolved_ref}/{dockerfile_path}"
-            url_ = url.format(full_name=full_name, resolved_ref=resolved_ref, dockerfile_path=dockerfile_path)
-            exist = _path_exists(url_)
-        if exist is None:
-            # currently not available
-            return None
-        return 1 if exist else 0
-    else:
-        return None
+            # get commit date of resolved ref
+            command = ["git", "show", "-s", "--format=%cI", resolved_ref]
+            result = git_execute(command, tmp_dir_path)
+            resolved_ref_date = result.stdout.strip()
+            date_ = datetime.fromisoformat(resolved_ref_date)
+            # have date in UTC and in isoformat
+            # this also removes timezone info
+            repo_data["resolved_ref_date"] = datetime.utcfromtimestamp(date_.timestamp()).isoformat()
+
+            command = ["git", "checkout", resolved_ref]
+            result = git_execute(command, tmp_dir_path)
+
+            default_buildpack = PythonBuildPack
+            with chdir(tmp_dir_path):
+                for BP in BUILDPACKS:
+                    bp = BP()
+                    try:
+                        if bp.detect():
+                            picked_buildpack = bp
+                            break
+                    except RuntimeError as e:
+                        if "The legacy buildpack has been removed." == e.args[0]:
+                            picked_buildpack = LegacyBinderDockerBuildPack()
+                            setattr(picked_buildpack, "binder_dir", "")
+                            break
+                        else:
+                            raise e
+                else:
+                    picked_buildpack = default_buildpack()
+
+                repo_data["binder_dir"] = picked_buildpack.binder_dir
+                repo_data["buildpack"] = picked_buildpack.__class__.__name__
+    return repo_data
 
 
 async def get_repo_data_from_github_api(provider, repo_url, access_token=None):
@@ -270,13 +284,6 @@ def get_repo2docker_image():
     helm_chart = safe_load(values_yaml.text)
     r2d_image = helm_chart['binderhub']['config']['BinderHub']['build_image']
     return r2d_image
-
-
-def git_execute(command, cwd=None):
-    result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
-    if result.returncode:
-        raise Exception(result.stderr)
-    return result
 
 
 def get_mybinder_repo2docker_history():

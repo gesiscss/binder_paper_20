@@ -10,7 +10,7 @@ from tornado.httpclient import HTTPClientError
 from sqlite_utils import Database
 from time import strftime
 from utils import get_repo_data_from_github_api, get_resolved_ref_now, get_image_name, get_logger, GithubException, \
-    is_dockerfile_repo, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table, \
+    get_repo_data_from_git, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table, \
     DEFAULT_IMAGE_PREFIX as default_image_prefix
 
 
@@ -20,7 +20,7 @@ def get_repos_from_launch_table(db, providers, launch_limit):
     chunk_size = 5000
     # NOTE: this query orders launch table by timestamp and creates a temporary table t
     # and this temporary table is used to select and also to concat specs, so we have specs in time order and
-    # we can use the last launched one to fetch resolved_ref_now
+    # we can use the last launched one to fetch resolved_ref
     # BUT sqlite docs (https://www.sqlite.org/lang_aggfunc.html#groupconcat) says
     # GROUP_CONCAT: The order of the concatenated elements is arbitrary.
     # that's why first we concat timestamp and spec (ts_spec) and then concat all ts_specs of a repo
@@ -57,7 +57,9 @@ async def create_repo_table(db_name, providers, launch_limit,
     # list of columns in the order that we will have in repo table
     columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch_ts', 'last_launch_ts', 'last_spec']
     if access_token:
-        columns.extend(['remote_id', 'fork', 'renamed', 'resolved_ref_now', 'image_name', 'dockerfile'])
+        columns.extend(['remote_id', 'fork', 'renamed', 'image_name',
+                        'resolved_ref', 'resolved_date', 'resolved_ref_date',
+                        'binder_dir', 'buildpack'])
     if repo_table in db.table_names():
         raise Exception(f"table {repo_table} already exists in {db_name}")
     else:
@@ -67,7 +69,7 @@ async def create_repo_table(db_name, providers, launch_limit,
         # that's why here we have to add a temp row and delete it again
         # set 1 for int columns and "" for text ones
         # remote_id is not int, because for gist repos it is commit hash
-        int_columns = ["id", "fork", "renamed", "dockerfile", "launch_count"]
+        int_columns = ["id", "fork", "renamed", "launch_count"]
         r = {c: 1 if c in int_columns else "" for c in columns}
         # here we set the pk column
         repos.insert(r, pk="id")
@@ -78,10 +80,15 @@ async def create_repo_table(db_name, providers, launch_limit,
     for df_chunk in repos_df_iter:
         df_chunk["id"] = 0
         if access_token:
-            # fetch additional data from GitHub API
-            df_chunk["resolved_ref_now"] = None
+            # additional data with default None, will be fetched from GitHub API and git history
+            df_chunk["resolved_ref"] = None
+            # date when resolved_ref is fetched
+            df_chunk["resolved_date"] = None
+            # commit date of resolved_ref
+            df_chunk["resolved_ref_date"] = None
             df_chunk["image_name"] = None
-            df_chunk["dockerfile"] = None
+            df_chunk["buildpack"] = None
+            df_chunk["binder_dir"] = None
             # there will be repos with same remote_id, because they are renamed
             df_chunk["remote_id"] = None
             df_chunk["fork"] = None
@@ -93,8 +100,9 @@ async def create_repo_table(db_name, providers, launch_limit,
         len_rows = len(df_chunk)
         retry = 3
         while True:
+            # internal id
             df_chunk.at[index, "id"] = id_
-            # use spec of last launch for resolved_ref_now
+            # use spec of the last launch for resolved_ref
             ts_specs = [ts_spec.split(";") for ts_spec in row["ts_specs"].split(",")]
             # sort by first element, which is timestamp
             ts_specs = sorted(ts_specs, key=lambda x: x[0])
@@ -102,11 +110,22 @@ async def create_repo_table(db_name, providers, launch_limit,
             df_chunk.at[index, "last_spec"] = last_spec
             if access_token:
                 try:
-                    resolved_ref_now = await get_resolved_ref_now(row["provider"], last_spec, access_token)
-                    df_chunk.at[index, "resolved_ref_now"] = resolved_ref_now
-                    if resolved_ref_now and resolved_ref_now != "404":
+                    # first fetch resolved_ref
+                    df_chunk.at[index, "resolved_date"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
+                    resolved_ref = await get_resolved_ref_now(row["provider"], last_spec, access_token)
+                    df_chunk.at[index, "resolved_ref"] = resolved_ref
+                    if resolved_ref and resolved_ref != "404":
                         df_chunk.at[index, "image_name"] = get_image_name(row["provider"], last_spec, image_prefix)
-                        df_chunk.at[index, "dockerfile"] = is_dockerfile_repo(row["provider"], row["repo_url"], resolved_ref_now)
+                        # get resolved_ref_date, binder_dir and buildpack
+                        repo_data = get_repo_data_from_git(row["repo_url"], resolved_ref)
+                        # if repo_data contains only 404s,
+                        # it means that resolved_ref of last_spec is removed from git history
+                        # TODO should we try again with previous spec?
+                        df_chunk.at[index, "binder_dir"] = repo_data["binder_dir"]
+                        df_chunk.at[index, "buildpack"] = repo_data["buildpack"]
+                        df_chunk.at[index, "resolved_ref_date"] = repo_data["resolved_ref_date"]
+
+                    # get repo data, fork and repo_id, from GitHub API
                     repo_data = await get_repo_data_from_github_api(row["provider"], row["repo_url"], access_token)
                     if repo_data:
                         df_chunk.at[index, "fork"] = repo_data.get("fork")
@@ -144,7 +163,7 @@ async def create_repo_table(db_name, providers, launch_limit,
                     else:
                         if isinstance(e, HTTPClientError):
                             # tornado.httpclient.HTTPClientError is raised in get_resolved_ref_now
-                            df_chunk.at[index, "resolved_ref_now"] = str(e.code)
+                            df_chunk.at[index, "resolved_ref"] = str(e.code)
                         logger.exception(f'{row["repo_url"]}')
             # get next row
             id_ += 1
@@ -218,7 +237,7 @@ def get_args():
     parser.add_argument('-t', '--access_token', required=False,
                         help='Access token for GitHub API. If access token is not provided, '
                              'these additional data will not be fetched: '
-                             '`fork`, `resolved_ref_now`, `image_name`, `remote_id` and `dockerfile`.\n'
+                             '`resolved_ref`, `image_name`, `fork`, `remote_id`, `renamed`, `buildpack`...\n'
                              'Without authentication GitHub API allows 60 requests per hour, '
                              'with authentication it is 5000 (https://developer.github.com/v3/#rate-limiting).\n'
                              'To create one: https://github.com/settings/tokens/new')
