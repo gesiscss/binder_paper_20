@@ -105,16 +105,9 @@ async def get_resolved_ref_now(provider, spec, access_token=None):
         raise Exception(f"unknown provider: {provider}")
 
     if provider in ["GitHub", "Gist"]:
-        try:
-            provider = REPO_PROVIDERS[provider](spec=spec)
-            provider.access_token = access_token
-            resolved_ref_now = await provider.get_resolved_ref()
-        except ValueError as e:
-            # catch rate limit error and sleep -> github_api_request raises ValueError
-            # raise ValueError("GitHub rate limit exceeded. Try again in %i minutes." % minutes_until_reset)
-            # minutes_until_reset = e.args[0].split(" minutes")[0].split()[-1].strip()
-            # setattr(e, "data", {"minutes_until_reset": minutes_until_reset})
-            raise e
+        provider = REPO_PROVIDERS[provider](spec=spec)
+        provider.access_token = access_token
+        resolved_ref_now = await provider.get_resolved_ref()
         if resolved_ref_now is None:
             # resolved ref not found
             return "404"
