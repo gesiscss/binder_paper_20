@@ -4,6 +4,9 @@ import string
 import escapism
 import time
 import requests
+import subprocess
+import tempfile
+from datetime import datetime
 from yaml import safe_load
 from github import Github, GithubException
 from urllib.parse import unquote
@@ -274,6 +277,47 @@ def get_repo2docker_image():
     helm_chart = safe_load(values_yaml.text)
     r2d_image = helm_chart['binderhub']['config']['BinderHub']['build_image']
     return r2d_image
+
+
+def git_execute(command, cwd=None):
+    result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+    if result.returncode:
+        raise Exception(result.stderr)
+    return result
+
+
+def get_mybinder_repo2docker_history():
+    with tempfile.TemporaryDirectory() as tmp_dir_path:
+        # clone mybinder.org-deploy repo
+        command = ["git", "clone", "https://github.com/jupyterhub/mybinder.org-deploy.git", tmp_dir_path]
+        result = git_execute(command)
+
+        # get change history of repo2docker
+        # git log --date=iso8601-strict -L /repo2docker/,+1:mybinder/values.yaml
+        command = ["git", "log", "--date=iso8601-strict", "-L", "/repo2docker/,+1:mybinder/values.yaml"]
+        result = git_execute(command, tmp_dir_path)
+
+        r2d_history = {}
+        for line in result.stdout.splitlines():
+            # print(line)
+            if line.startswith("commit"):
+                commit = line[6:].strip()
+            elif line.startswith("Date:"):
+                date_str = line[5:].strip()
+                date_ = datetime.fromisoformat(date_str)
+                # have date in UTC and in isoformat
+                # this also removes timezone info
+                date_str_utc = datetime.utcfromtimestamp(date_.timestamp()).isoformat()
+                # print(date_str, date_, date_str_utc)
+            elif line.startswith("- "):
+                old_image = line.split(":", maxsplit=1)[-1].strip()
+            elif line.startswith("+ "):
+                new_image = line.split(":", maxsplit=1)[-1].strip()
+                if old_image:
+                    # to skip first commit which adds repo2docker
+                    r2d_history[date_str_utc] = {"commit": commit, "old": old_image, "new": new_image}
+                old_image = None
+    return r2d_history
 
 
 def get_logger(name):

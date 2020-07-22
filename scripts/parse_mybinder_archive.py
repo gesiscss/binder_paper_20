@@ -8,7 +8,8 @@ from time import strftime
 from sqlite_utils import Database
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
-from utils import get_ref, get_org, get_repo_url, get_logger, LAUNCH_TABLE as launch_table
+from utils import get_ref, get_org, get_repo_url, get_logger, get_mybinder_repo2docker_history, \
+                  LAUNCH_TABLE as launch_table
 
 
 def parse_spec(provider, spec):
@@ -19,6 +20,23 @@ def parse_spec(provider, spec):
     # so generate repo_urls here instead of in create_repo_table.py
     repo_url = get_repo_url(provider, spec)
     return ref, org, repo_url
+
+
+def get_r2d_version(mybinder_r2d_history, timestamp):
+    r2d_version = None
+    for commit_date in sorted(mybinder_r2d_history):
+        # event timestamp is already in UTC and in minute resolution
+        # have commit date also in minute resolution
+        commit_date_in_min = datetime.fromisoformat(commit_date).replace(second=0, microsecond=0).isoformat()
+        if timestamp <= commit_date_in_min:
+            r2d_version = mybinder_r2d_history[commit_date]["old"]
+            break
+    if r2d_version is None:
+        # latest
+        r2d_version = mybinder_r2d_history[commit_date]["new"]
+    # print(commit_date, commit_date_in_min, timestamp)
+    # print(timestamp, commit_date_in_min, r2d_version)
+    return r2d_version
 
 
 def _handle_exceptions_in_archve(df, a_name):
@@ -81,9 +99,12 @@ def parse_archive(archive_date, db_name):
     df[["ref", "org", "repo_url"]] = df.apply(lambda row: parse_spec(row["provider"], row["spec"]),
                                               axis=1,
                                               result_type='expand')
+    # add r2d_version for each launch
+    mybinder_r2d_history = get_mybinder_repo2docker_history()
+    df["r2d_version"] = df.apply(lambda row: get_r2d_version(mybinder_r2d_history, row["timestamp"]), axis=1)
 
     # re-order columns, so more readable
-    df = df[['timestamp', 'version', 'origin', 'provider', 'spec', 'org', 'ref', 'resolved_ref', 'repo_url']]
+    df = df[['timestamp', 'version', 'origin', 'provider', 'spec', 'org', 'ref', 'resolved_ref', 'r2d_version', 'repo_url']]
 
     # save into database, without index
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.to_sql.html
