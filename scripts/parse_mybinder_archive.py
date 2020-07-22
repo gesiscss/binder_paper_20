@@ -46,7 +46,7 @@ def _handle_exceptions_in_archve(df, a_name):
     # events-2019-06-12.jsonl has mixed rows: with and without origin value
     if a_name == "events-2019-06-12.jsonl":
         df['origin'].fillna('mybinder.org', inplace=True)
-    # events before 12.06.2019 has no (resolved) ref
+    # events before 18.06.2020 has no (resolved) ref
     if 'ref' not in df.columns:
         # TODO we could use utils.get_resolved_ref(timestamp, provider, spec) when it is implemented
         df['ref'] = ""
