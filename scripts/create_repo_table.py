@@ -29,9 +29,7 @@ def get_repos_from_launch_table(db, providers, launch_limit):
                                            COUNT(t.repo_url) AS launch_count, 
                                            MIN(t.timestamp) AS first_launch_ts, 
                                            MAX(t.timestamp) AS last_launch_ts, 
-                                           GROUP_CONCAT(DISTINCT t.ts_spec) AS ts_specs, 
-                                           GROUP_CONCAT(DISTINCT t.ref) AS refs, 
-                                           GROUP_CONCAT(DISTINCT t.resolved_ref) AS resolved_refs 
+                                           GROUP_CONCAT(DISTINCT t.ts_spec) AS ts_specs 
                                      FROM (SELECT provider, repo_url, timestamp, 
                                                   (timestamp || ";" || spec) AS ts_spec, 
                                                   ref, resolved_ref 
@@ -57,7 +55,7 @@ async def create_repo_table(db_name, providers, launch_limit,
 
     db = Database(db_name)
     # list of columns in the order that we will have in repo table
-    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch_ts', 'last_launch_ts', 'last_spec', 'refs', 'resolved_refs']
+    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch_ts', 'last_launch_ts', 'last_spec']
     if access_token:
         columns.extend(['remote_id', 'fork', 'renamed', 'resolved_ref_now', 'image_name', 'dockerfile'])
     if repo_table in db.table_names():
