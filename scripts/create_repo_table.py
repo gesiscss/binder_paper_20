@@ -105,7 +105,7 @@ async def create_repo_table(db_name, providers, launch_limit,
                     resolved_ref_now = await get_resolved_ref_now(row["provider"], last_spec, access_token)
                     df_chunk.at[index, "resolved_ref_now"] = resolved_ref_now
                     if resolved_ref_now and resolved_ref_now != "404":
-                        df_chunk.at[index, "image_name"] = get_image_name(row["provider"], last_spec, image_prefix, resolved_ref_now)
+                        df_chunk.at[index, "image_name"] = get_image_name(row["provider"], last_spec, image_prefix)
                         df_chunk.at[index, "dockerfile"] = is_dockerfile_repo(row["provider"], row["repo_url"], resolved_ref_now)
                     repo_data = await get_repo_data_from_github_api(row["provider"], row["repo_url"], access_token)
                     if repo_data:
