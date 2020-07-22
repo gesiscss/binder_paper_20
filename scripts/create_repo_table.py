@@ -27,8 +27,8 @@ def get_repos_from_launch_table(db, providers, launch_limit):
     # later we will sort and get last launched spec
     df_iter = pd.read_sql_query(f"""SELECT t.provider AS provider, t.repo_url AS repo_url, 
                                            COUNT(t.repo_url) AS launch_count, 
-                                           MIN(t.timestamp) AS first_launch, 
-                                           MAX(t.timestamp) AS last_launch, 
+                                           MIN(t.timestamp) AS first_launch_ts, 
+                                           MAX(t.timestamp) AS last_launch_ts, 
                                            GROUP_CONCAT(DISTINCT t.ts_spec) AS ts_specs, 
                                            GROUP_CONCAT(DISTINCT t.ref) AS refs, 
                                            GROUP_CONCAT(DISTINCT t.resolved_ref) AS resolved_refs 
@@ -40,7 +40,7 @@ def get_repos_from_launch_table(db, providers, launch_limit):
                                      WHERE provider IN ({", ".join(providers)}) 
                                      GROUP BY repo_url 
                                      HAVING launch_count > {launch_limit} 
-                                     ORDER BY first_launch;""",
+                                     ORDER BY first_launch_ts;""",
                                 db.conn,
                                 chunksize=chunk_size)
     return df_iter
@@ -57,7 +57,7 @@ async def create_repo_table(db_name, providers, launch_limit,
 
     db = Database(db_name)
     # list of columns in the order that we will have in repo table
-    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch', 'last_launch', 'last_spec', 'refs', 'resolved_refs']
+    columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch_ts', 'last_launch_ts', 'last_spec', 'refs', 'resolved_refs']
     if access_token:
         columns.extend(['remote_id', 'fork', 'renamed', 'resolved_ref_now', 'image_name', 'dockerfile'])
     if repo_table in db.table_names():
