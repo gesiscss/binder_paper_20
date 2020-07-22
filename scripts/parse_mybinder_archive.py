@@ -68,6 +68,15 @@ def parse_archive(archive_date, db_name):
     # resolved ref is the one which is passed to repo2docker for build
     df.rename(columns={'ref': 'resolved_ref'}, inplace=True)
 
+    # convert datetime into a supported format as text
+    # use "YYYY-MM-DDTHH:MM:SS" format because it is same as python isoformat (without timezone)
+    # https://www.sqlite.org/lang_datefunc.html
+    # https://www.sqlite.org/datatype3.html#date_and_time_datatype
+    # remove timezone info too, it is always UTC
+    # df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+    df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    # print(df.dtypes)
+
     # generate new columns that we might need for analysis
     df[["ref", "org", "repo_url"]] = df.apply(lambda row: parse_spec(row["provider"], row["spec"]),
                                               axis=1,
