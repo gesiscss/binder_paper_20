@@ -17,14 +17,15 @@ For more information please run `python parse_mybinder_archive.py --help`.
 
 column name | desc
 ----- | ----
-timestamp | 
+timestamp | launch datetime as isoformat in UTC
 version | 
 origin | 
 provider | 
 spec | 
 org | 
-ref | 
-resolved_ref | 
+ref | ref extracted from spec
+resolved_ref | resolved ref of spec when launch happened, null for events before 18.06.2020
+r2d_version | r2d version of mybinder.org when launch happened
 repo_url | 
 
 2. [create_repo_table.py](scripts/create_repo_table.py)
@@ -39,18 +40,25 @@ column name | desc
 id | internal id
 remote_id | repo id in GitHub, this is used to detect renamed repos
 renamed | 1 or 0, if repo is renamed or not
-fork | 1 or 0, if repo is forked or not
-dockerfile | 1 or 0, if repo is dockerfile repo or not
-resolved_ref_now | current resolved ref of the last launched spec
+fork | 1 or 0, if repo is forked or not. if null, it means TODO
+buildpack | which Buildpack of r2d is used
+binder_dir | "" or "binder" or ".binder"
 last_spec | 
-image_name | 
+resolved_ref | resolved ref of the last_spec at the time the script fetches it
+resolved_date | date when resolved_ref is fetched
+resolved_ref_date | commit date of resolved_ref
+image_name | docker image name without tag
 repo_url | 
 provider | 
 launch_count | 
-first_launch | 
-last_launch | 
-refs | 
-resolved_refs | 
+first_launch_ts | timestamp of the first launch
+last_launch_ts | timestamp of the last launch
+
+This script also add a new column to `launch` table:
+
+column name | desc
+----- | ----
+repo_id | foreign key reference to remote_id column in repo table
 
 3. [build_images.py](scripts/build_images.py)
 
