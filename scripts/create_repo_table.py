@@ -169,12 +169,12 @@ async def create_repo_table(db_name, providers, launch_limit,
         # detect renamed repos
         # get rows with same remote id
         df_renamed = pd.read_sql_query(f"""SELECT remote_id, 
-                                          COUNT(remote_id) AS duplicated, 
-                                          GROUP_CONCAT(DISTINCT id) AS ids 
-                                   FROM {repo_table} 
-                                   WHERE remote_id IS NOT null 
-                                   GROUP BY provider, remote_id
-                                   HAVING duplicated > 1;""",
+                                                  COUNT(remote_id) AS duplicated, 
+                                                  GROUP_CONCAT(DISTINCT id) AS ids 
+                                           FROM {repo_table} 
+                                           WHERE remote_id IS NOT null 
+                                           GROUP BY provider, remote_id
+                                           HAVING duplicated > 1;""",
                                        db.conn)
         # and for that rows set renamed column to 1
         for index, row in df_renamed.iterrows():
@@ -186,6 +186,15 @@ async def create_repo_table(db_name, providers, launch_limit,
         # and set renamed as 0 for the rest of the repos which still exists
         # for non-existing repos it will stay as None (default)
         db.conn.execute(f"UPDATE {repo_table} SET renamed=0 WHERE fork IN (0, 1) AND (renamed!=1 OR renamed IS null);")
+        db.conn.commit()
+
+        # add repo_id fk into launch table
+        if "repo_id" not in db[launch_table].columns_dict:
+            db[launch_table].add_column("repo_id", fk=repo_table, fk_col="remote_id")
+        db.conn.execute(f"""UPDATE {launch_table} 
+                            SET repo_id=(SELECT remote_id 
+                                         FROM {repo_table} 
+                                         WHERE repo_url={launch_table}.repo_url);""")
         db.conn.commit()
 
     # optimize the database
