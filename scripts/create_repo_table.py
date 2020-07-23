@@ -207,9 +207,9 @@ async def create_repo_table(db_name, providers, launch_limit,
 
         # add repo_id fk into launch table
         if "repo_id" not in db[launch_table].columns_dict:
-            db[launch_table].add_column("repo_id", fk=repo_table, fk_col="remote_id")
+            db[launch_table].add_column("repo_id", fk=repo_table, fk_col="id")
         db.conn.execute(f"""UPDATE {launch_table} 
-                            SET repo_id=(SELECT remote_id 
+                            SET repo_id=(SELECT id 
                                          FROM {repo_table} 
                                          WHERE repo_url={launch_table}.repo_url);""")
         db.conn.commit()
