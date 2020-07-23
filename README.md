@@ -58,7 +58,7 @@ This script also add a new column to `launch` table:
 
 column name | desc
 ----- | ----
-repo_id | foreign key reference to remote_id column in repo table
+repo_id | foreign key reference to id column in repo table
 
 3. [build_images.py](scripts/build_images.py)
 
