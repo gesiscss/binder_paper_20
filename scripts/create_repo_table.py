@@ -17,7 +17,7 @@ from utils import get_repo_data_from_github_api, get_resolved_ref_now, get_image
 def get_repos_from_launch_table(db, providers, launch_limit):
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
-    chunk_size = 5000
+    chunk_size = 1000
     # NOTE: this query orders launch table by timestamp and creates a temporary table t
     # and this temporary table is used to select and also to concat specs, so we have specs in time order and
     # we can use the last launched one to fetch resolved_ref
