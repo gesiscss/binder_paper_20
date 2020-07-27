@@ -6,6 +6,7 @@ import time
 import requests
 import subprocess
 import tempfile
+import os
 from datetime import datetime
 from yaml import safe_load
 from github import Github, GithubException
@@ -20,7 +21,10 @@ from repo2docker.utils import chdir
 
 LAUNCH_TABLE = "mybinderlaunch"
 REPO_TABLE = "repo"
+NOTEBOOK_TABLE = "notebook"
+
 DEFAULT_IMAGE_PREFIX = "bp20-"
+
 BUILDPACKS = [
     LegacyBinderDockerBuildPack,
     DockerBuildPack,
@@ -82,14 +86,15 @@ def get_ref(provider, spec):
     # NOTE: branch names can contain "/"
     if provider == 'GitHub':
         org, repo_name, unresolved_ref = spec.split('/', 2)
-        ref = unresolved_ref
+        # there are "/master"s and it is invalid
+        ref = unresolved_ref.strip("/")
     elif provider == 'Gist':
         parts = spec.split('/')
         if len(parts) > 2:
             # spec is usually in form of "ELC/8fdc0f490b3058872a7014f01416dfb6/master"
             # or "AhmadAlwareh/75cea0a7d0442a8c125561011a327a61/66a9fe58188ba819d3a655cc38a788be2dcdae49"
             # but in the archive there are specs like "ELC/380e584b87227b15727ec886223d9d4a/master/master"
-            ref = parts[2]
+            ref = parts[2].strip("/")
         elif len(parts) == 2:
             # "SergiyKolesnikov/f94d91b947051ab5d2ba1aa30e25f050" is also valid spec
             ref = "master"
@@ -114,21 +119,21 @@ def get_resolved_ref(timestamp, provider, spec):
     return NotImplemented
 
 
-async def get_resolved_ref_now(provider, spec, access_token=None):
-    if provider not in REPO_PROVIDERS:
-        raise Exception(f"unknown provider: {provider}")
-
-    if provider in ["GitHub", "Gist"]:
-        provider = REPO_PROVIDERS[provider](spec=spec)
-        provider.access_token = access_token
-        resolved_ref = await provider.get_resolved_ref()
-        if resolved_ref is None:
-            # resolved ref not found
-            return "404"
-        else:
-            return resolved_ref
-    else:
-        return None
+# async def get_resolved_ref_now(provider, spec, access_token=None):
+#     if provider not in REPO_PROVIDERS:
+#         raise Exception(f"unknown provider: {provider}")
+#
+#     if provider in ["GitHub", "Gist"]:
+#         provider = REPO_PROVIDERS[provider](spec=spec)
+#         provider.access_token = access_token
+#         resolved_ref = await provider.get_resolved_ref()
+#         if resolved_ref is None:
+#             # resolved ref not found
+#             return "404"
+#         else:
+#             return resolved_ref
+#     else:
+#         return None
 
 
 def get_repo_url(provider, spec):
@@ -171,38 +176,58 @@ def get_image_name(provider, spec, image_prefix, ref):
     return image_name
 
 
-def git_execute(command, cwd=None):
-    result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+def git_execute(command, cwd=None, env=None):
+    result = subprocess.run(command, universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env)
     if result.returncode:
         raise Exception(f"{command}: {result.stderr}")
     return result
 
 
-def get_repo_data_from_git(repo_url, resolved_ref):
+def get_repo_data_from_git(ref, repo_url):
     """
     - get commit date of resolved ref from git history
     - use repo2docker to detect binder_dir and buildpack
     """
-    repo_data = {}
+    repo_data = {
+        "resolved_date": datetime.utcnow().replace(second=0, microsecond=0).isoformat(),
+        "resolved_ref": None,
+        "resolved_ref_date": None,
+        "binder_dir": None,
+        "buildpack": None,
+        "notebooks": None,
+        "nbs_count": None,
+    }
     with tempfile.TemporaryDirectory() as tmp_dir_path:
         command = ["git", "clone", repo_url, tmp_dir_path]
-        result = git_execute(command)
+        git_execute(command, env={"GIT_TERMINAL_PROMPT": "0"})
+
+        # command = ["git", "reset", "--hard", "HEAD"]
+        # git_execute(command, tmp_dir_path)
 
         # check if resolved ref exists in repo
         # it is possible that a commit, which is launched, is removed from history
         # ex: https://github.com/vaughnkoch/test1 and
         # https://github.com/vaughnkoch/test1/commit/464062f227e35eea5d01e138b83bb01912587060
-        command = ["git", "cat-file", "-t", resolved_ref]
+        command = ["git", "checkout", ref]
         try:
             git_execute(command, tmp_dir_path)
         except Exception as e:
-            if e.args[0].strip().endswith("fatal: git cat-file: could not get object info"):
-                repo_data["resolved_ref_date"] = "404"
-                repo_data["binder_dir"] = "404"
-                repo_data["buildpack"] = "404"
+            e_txt = e.args[0].strip()
+            if f"error: pathspec '{ref}' did not match any file(s) known to git" in e_txt or \
+                "fatal: reference is not a tree" in e_txt:
+                repo_data["resolved_ref"] = "404"
+                # repo_data["resolved_ref_date"] = "404"
+                # repo_data["binder_dir"] = "404"
+                # repo_data["buildpack"] = "404"
+                return repo_data
             else:
                 raise e
         else:
+            command = ["git", "rev-parse", "HEAD"]
+            result = git_execute(command, tmp_dir_path)
+            resolved_ref = result.stdout.strip()
+            repo_data["resolved_ref"] = resolved_ref
+
             # get commit date of resolved ref
             command = ["git", "show", "-s", "--format=%cI", resolved_ref]
             result = git_execute(command, tmp_dir_path)
@@ -211,9 +236,6 @@ def get_repo_data_from_git(repo_url, resolved_ref):
             # have date in UTC and in isoformat
             # this also removes timezone info
             repo_data["resolved_ref_date"] = datetime.utcfromtimestamp(date_.timestamp()).isoformat()
-
-            command = ["git", "checkout", resolved_ref]
-            result = git_execute(command, tmp_dir_path)
 
             default_buildpack = PythonBuildPack
             with chdir(tmp_dir_path):
@@ -235,15 +257,27 @@ def get_repo_data_from_git(repo_url, resolved_ref):
 
                 repo_data["binder_dir"] = picked_buildpack.binder_dir
                 repo_data["buildpack"] = picked_buildpack.__class__.__name__
+
+            # get notebooks
+            # TODO what if somehow more notebooks are added into repo by repo2docker? (e.g. postBuild)
+            notebooks = []
+            with chdir(tmp_dir_path):
+                for root, dirs, files in os.walk("."):
+                    for file in files:
+                        if file.endswith(".ipynb"):
+                            rel_file_path = os.path.relpath(os.path.join(root, file), tmp_dir_path)
+                            notebooks.append(rel_file_path)
+            repo_data["notebooks"] = notebooks
+            repo_data["nbs_count"] = len(notebooks)
     return repo_data
 
 
-async def get_repo_data_from_github_api(provider, repo_url, access_token=None):
+def get_repo_data_from_github_api(provider, repo_url, access_token=None):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
 
     if provider in ["GitHub", "Gist"]:
-        repo_data = {}
+        repo_data = {"remote_id": None, "fork": None}
         try:
             g = Github(access_token)
             if provider == "GitHub":
@@ -264,6 +298,8 @@ async def get_repo_data_from_github_api(provider, repo_url, access_token=None):
                 # round expiry up to nearest 5 minutes (as it is done in bhub)
                 minutes_until_reset = 5 * (1 + (reset_seconds // 60 // 5))
                 e.data["minutes_until_reset"] = minutes_until_reset
+                raise e
+            else:
                 raise e
         if getattr(repo, "fork", None) or getattr(repo, "fork_of", None):
             # GitHub object has fork attribute, but Gist object has fork_of

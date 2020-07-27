@@ -3,7 +3,7 @@ pandas==1.0.*
 sqlite-utils==2.11.*
 #sqlalchemy==1.3.*
 # NOTE: get bhub and r2d versions from https://mybinder.org/versions
-git+git://github.com/jupyterhub/binderhub@bf76373#egg=binderhub
+git+git://github.com/jupyterhub/binderhub@d861de4#egg=binderhub
 git+git://github.com/jupyter/repo2docker@8bbced7#egg=repo2docker
 # https://github.com/PyGithub/PyGithub
 PyGithub==1.51
