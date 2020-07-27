@@ -10,4 +10,4 @@ dependencies:
   - conda-forge::jupyter_contrib_nbextensions=0.5.1
   - pip:
     - sqlite-utils==2.11.*
-    - nbdime=2.0.*
+    - nbdime==2.0.*
