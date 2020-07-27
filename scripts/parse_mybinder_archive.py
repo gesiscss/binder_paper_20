@@ -53,10 +53,15 @@ def _handle_exceptions_in_archve(df, a_name):
     # events-2020-06-18.jsonl has mixed rows: with and without (resolved) ref value
     if a_name == "events-2020-06-18.jsonl":
         df['ref'].fillna('', inplace=True)
+    # NOTE: this query would give us repos with different providers in archive
+    #  select count(distinct provider) as c, group_concat(distinct provider), repo_url from mybinderlaunch group by repo_url having c>1;
+    # here we only fix the ones which causes exceptions in our script, for example in get_ref() function
     # in some archives Gist launches have wrong provider (GitHub)
     elif a_name == "events-2018-11-25.jsonl":
         df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "provider"] = "Gist"
         df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "spec"] = "jakevdp/256c3ad937af9ec7d4c65a29e5b6d454"
+    # elif a_name == "events-2018-12-16.jsonl":
+    #     df.loc[df['spec'] == "agailloty/5989b393c1b54ad62412c2dc027903a3/master", "provider"] = "Gist"
     elif a_name == "events-2019-01-28.jsonl":
         df.loc[df['spec'] == "loicmarie/ade5ea460444ea0ff72d5c94daa14500", "provider"] = "Gist"
     elif a_name == "events-2019-02-22.jsonl":
