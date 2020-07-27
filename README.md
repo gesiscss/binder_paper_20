@@ -30,7 +30,7 @@ repo_url |
 
 2. [create_repo_table.py](scripts/create_repo_table.py)
 
-Reads output of the first script (`mybinderlaunch` table) and creates a `repo` table. 
+Reads output of the first script (`mybinderlaunch` table) and creates `repo` and `notebook` tables. 
 For more information please run `python create_repo_table.py --help`.
 
 `repo` table:
@@ -39,22 +39,30 @@ column name | desc
 ----- | ----
 id | internal id
 remote_id | repo id in GitHub, this is used to detect renamed repos
-renamed | 1 or 0, if repo is renamed or not
-fork | 1 or 0, if repo is forked or not. if null, it means TODO
-buildpack | which Buildpack of r2d is used
-binder_dir | "" or "binder" or ".binder"
+provider | 
+repo_url | 
+first_launch_ts | timestamp of the first launch
+last_launch_ts | timestamp of the last launch
 last_spec | 
+ref | ref extracted from last_spec
 resolved_ref | resolved ref of the last_spec at the time the script fetches it
 resolved_date | date when resolved_ref is fetched
 resolved_ref_date | commit date of resolved_ref
-image_name | docker image name without tag
-repo_url | 
-provider | 
-launch_count | 
-first_launch_ts | timestamp of the first launch
-last_launch_ts | timestamp of the last launch
+fork | 1 or 0, if repo is forked or not. if null, it means TODO
+renamed | 0 (not renamed) or number of times that repo is renamed
+launch_count | number of launches
+binder_dir | "" or "binder" or ".binder"
+buildpack | which Buildpack of r2d is used
+nbs_count | number of notebooks in repo
 
-This script also add a new column to `launch` table:
+`notebook` table:
+
+column name | desc
+----- | ----
+repo_id | foreign key reference to id column in repo table
+nb_rel_path | notebook's relative path in repo
+
+This script also adds a new column to `launch` table:
 
 column name | desc
 ----- | ----
