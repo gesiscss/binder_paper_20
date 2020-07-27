@@ -51,7 +51,7 @@ def get_repo_data(repo_entry, access_token):
             repo_data = get_repo_data_from_github_api(repo_entry["provider"], repo_entry["repo_url"], access_token)
             repo_entry.update(repo_data)
             ref = get_ref(repo_entry["provider"], repo_entry["last_spec"])
-            repo_data["ref"] = ref
+            repo_entry["ref"] = ref
             if repo_entry["fork"] in [0, 1]:
                 repo_data = get_repo_data_from_git(ref, repo_entry["repo_url"])
                 repo_entry.update(repo_data)
