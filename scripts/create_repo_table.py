@@ -226,6 +226,7 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
     if access_token:
         if verbose:
             print("Detecting renamed repos")
+        logger.info("Detecting renamed repos")
         # detect renamed repos (rows with same remote id)
         # and set renamed to 0 or to number of time that repo is named
         # for non-existing repos it will stay as None (default)
@@ -239,6 +240,7 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
         # add repo_id fk into launch table
         if verbose:
             print("Adding repo_id fk into launch table")
+        logger.info("Adding repo_id fk into launch table")
         if "repo_id" not in db[launch_table].columns_dict:
             db[launch_table].add_column("repo_id", fk=repo_table, fk_col="id")
         db.conn.execute(f"""UPDATE {launch_table}
@@ -250,6 +252,7 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
     # optimize the database
     if verbose:
         print("Vacuum")
+    logger.info("Vacuum")
     db.vacuum()
     end_time = datetime.now()
     msg = f"repo table is created with {repo_count} ({count}) entries"
