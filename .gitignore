@@ -1,5 +1,5 @@
 registry
 scripts/build_images
-#scripts/run_images
+scripts/run_images
 *.log
 *.db
