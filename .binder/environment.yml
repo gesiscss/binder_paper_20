@@ -1,6 +1,12 @@
 name: bp20
+channels:
+  - conda-forge
+  - defaults
 dependencies:
   - python=3.7
   - pandas=1.0.*
+  - matplotlib=3.3.*
+  - seaborn=0.10.*
+  - conda-forge::jupyter_contrib_nbextensions=0.5.1
   - pip:
     - sqlite-utils==2.11.*
