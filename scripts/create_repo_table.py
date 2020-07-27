@@ -9,9 +9,8 @@ from time import sleep
 from tornado.httpclient import HTTPClientError
 from sqlite_utils import Database
 from time import strftime
-from utils import get_repo_data_from_github_api, get_resolved_ref_now, get_image_name, get_logger, GithubException, \
-    get_repo_data_from_git, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table, \
-    DEFAULT_IMAGE_PREFIX as default_image_prefix
+from utils import get_repo_data_from_github_api, get_resolved_ref_now, get_logger, GithubException, \
+    get_repo_data_from_git, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table
 
 
 def get_repos_from_launch_table(db, providers, launch_limit):
@@ -44,8 +43,7 @@ def get_repos_from_launch_table(db, providers, launch_limit):
     return df_iter
 
 
-async def create_repo_table(db_name, providers, launch_limit,
-                            image_prefix, access_token=None, verbose=False):
+async def create_repo_table(db_name, providers, launch_limit, access_token=None, verbose=False):
     logger_name = f'create_repo_table_at_{strftime("%Y_%m_%d_%H_%M_%S")}'.replace("-", "_")
     logger = get_logger(logger_name)
     start_time = datetime.now()
@@ -57,7 +55,7 @@ async def create_repo_table(db_name, providers, launch_limit,
     # list of columns in the order that we will have in repo table
     columns = ['id', 'repo_url', 'provider', 'launch_count', 'first_launch_ts', 'last_launch_ts', 'last_spec']
     if access_token:
-        columns.extend(['remote_id', 'fork', 'renamed', 'image_name',
+        columns.extend(['remote_id', 'fork', 'renamed',
                         'resolved_ref', 'resolved_date', 'resolved_ref_date',
                         'binder_dir', 'buildpack'])
     if repo_table in db.table_names():
@@ -86,7 +84,6 @@ async def create_repo_table(db_name, providers, launch_limit,
             df_chunk["resolved_date"] = None
             # commit date of resolved_ref
             df_chunk["resolved_ref_date"] = None
-            df_chunk["image_name"] = None
             df_chunk["buildpack"] = None
             df_chunk["binder_dir"] = None
             # there will be repos with same remote_id, because they are renamed
@@ -115,7 +112,6 @@ async def create_repo_table(db_name, providers, launch_limit,
                     resolved_ref = await get_resolved_ref_now(row["provider"], last_spec, access_token)
                     df_chunk.at[index, "resolved_ref"] = resolved_ref
                     if resolved_ref and resolved_ref != "404":
-                        df_chunk.at[index, "image_name"] = get_image_name(row["provider"], last_spec, image_prefix)
                         # get resolved_ref_date, binder_dir and buildpack
                         repo_data = get_repo_data_from_git(row["repo_url"], resolved_ref)
                         # if repo_data contains only 404s,
@@ -237,7 +233,7 @@ def get_args():
     parser.add_argument('-t', '--access_token', required=False,
                         help='Access token for GitHub API. If access token is not provided, '
                              'these additional data will not be fetched: '
-                             '`resolved_ref`, `image_name`, `fork`, `remote_id`, `renamed`, `buildpack`...\n'
+                             '`resolved_ref`, `fork`, `remote_id`, `renamed`, `buildpack`...\n'
                              'Without authentication GitHub API allows 60 requests per hour, '
                              'with authentication it is 5000 (https://developer.github.com/v3/#rate-limiting).\n'
                              'To create one: https://github.com/settings/tokens/new')
@@ -245,8 +241,6 @@ def get_args():
     #                     help='Comma-separated list of providers to filter. '
     #                          'Default is "GitHub,Gist".'
     #                          'To include all: "GitHub,Gist,Git,GitLab,Zenodo,Figshare,Hydroshare,Dataverse"')
-    parser.add_argument('-p', '--image_prefix', required=False, default=default_image_prefix,
-                        help=f'Prefix to be prepended to image name of each repo, default is "{default_image_prefix}".')
     parser.add_argument('-l', '--launch_limit', type=int, default=0,
                         help='Minimum number of launches that a repo must have to be saved. '
                              'Default is 0, which means save all repos.')
@@ -261,7 +255,6 @@ def main():
     db_name = args.db_name
     # providers = ['"'+p.strip()+'"' for p in args.providers.split(",")]
     providers = ['"'+p.strip()+'"' for p in "GitHub,Gist".split(",")]
-    image_prefix = args.image_prefix
     launch_limit = args.launch_limit
     # fork = args.fork
     access_token = args.access_token
@@ -273,7 +266,7 @@ def main():
         #           " process will take very long time")
     verbose = args.verbose
 
-    asyncio.run(create_repo_table(db_name, providers, launch_limit, image_prefix, access_token, verbose))
+    asyncio.run(create_repo_table(db_name, providers, launch_limit, access_token, verbose))
     print(f"""\n
     Repo data is extracted from `{launch_table}` table and saved into `{repo_table}` table.
     You can open this database with `sqlite3 {db_name}` command and then run any sqlite3 command, 

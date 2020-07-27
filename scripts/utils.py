@@ -162,12 +162,12 @@ def _safe_build_slug(build_slug, limit, hash_length=6):
     ).lower()
 
 
-def get_image_name(provider, spec, image_prefix):
+def get_image_name(provider, spec, image_prefix, ref):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
     build_slug = REPO_PROVIDERS[provider](spec=spec).get_build_slug()
     safe_build_slug = _safe_build_slug(build_slug, limit=255 - len(image_prefix))
-    image_name = f"{image_prefix}{safe_build_slug}".replace('_', '-').lower()
+    image_name = f"{image_prefix}{safe_build_slug}:{ref}".replace('_', '-').lower()
     return image_name
 
 
