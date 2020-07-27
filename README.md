@@ -68,21 +68,21 @@ column name | desc
 ----- | ----
 repo_id | foreign key reference to id column in repo table
 
-3. [build_images.py](scripts/build_images.py)
+3. [build_and_run_images.py](scripts/build_and_run_images.py)
 
 Runs `repo2docker` to build images of repos in `repo` table. 
-And adds a new column `build_success` into `repo` table. 
-For more information please run `python build_images.py --help`.
+For more information please run `python build_and_run_images.py --help`.
 
-4. TODO run_images.py
+`execution` table:
 
-Run each image from previous step and check
-
-- if repo contains any jupyter notebook (`contains_nbs` column)
-- if notebooks in repo are executed successfully (`nbs_executed` column)
-- if outputs of notebooks same as in repo (`nbs_same_output` column)
-- TODO more?
-
+column name | desc
+----- | ----
+image_name | docker image name, tag contains r2d commit and resolved ref
+repo_id | foreign key reference to id column in repo table
+build_success | 1 or 0
+nb_rel_path | notebook's relative path in repo
+kernel_name | 
+nb_success | 1 or 0, if notebook execution successful or not
 
 ### Analysis
 
