@@ -79,11 +79,15 @@ column name | desc
 ----- | ----
 image_name | docker image name, tag contains r2d commit and resolved ref
 repo_id | foreign key reference to id column in repo table
+r2d_version | 
+build_timestamp | 
 build_success | 1 or 0
 nb_rel_path | notebook's relative path in repo
-kernel_name | 
 nb_success | 1 or 0, if notebook execution successful or not
+nb_log_file | logs from notebook execution, e.g. kernel info can be found there
+
+Note: docker version is 19.03.5 (https://github.com/jupyterhub/binderhub/blob/d861de48be8a3eae6cb35c22a976cffbebc45c69/helm-chart/binderhub/values.yaml#L146-L152)
 
 ### Analysis
 
-TODO
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/gesiscss/binder_paper_20/master?filepath=analysis%2Frepos.ipynb)
