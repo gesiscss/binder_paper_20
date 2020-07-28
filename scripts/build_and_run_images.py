@@ -9,6 +9,7 @@ from utils import get_repo2docker_image, get_logger, get_image_name, \
      REPO_TABLE as repo_table, NOTEBOOK_TABLE as notebook_table, EXECUTION_TABLE as execution_table, \
      DEFAULT_IMAGE_PREFIX as default_image_prefix
 from time import strftime
+from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
 from sqlite_utils import Database
@@ -17,12 +18,77 @@ from sqlite_utils import Database
 DOCKER_TIMEOUT = 300
 
 
-def run_image(image_name):
-    # TODO
-    pass
+def run_image(repo_id, image_name):
+    """This function is mostly copied from
+    https://github.com/minrk/repo2docker-checker/blob/bd179da5786e08a12ef92295cf02b38a5c2b8ceb/repo2docker_checker/checker.py#L160
+    """
+    db = Database(db_name)
+    output_folder = os.path.abspath(run_output_folder)
+    repo_folder = f'{repo_id}_{image_name.replace("/", "-")}'
+    repo_output_folder = os.path.join(output_folder, repo_folder)
+    current_dir = os.path.dirname(os.path.realpath(__file__))
+    client = docker.from_env(timeout=DOCKER_TIMEOUT)
+    execution_entries = []
+    for row in db[notebook_table].rows_where(f"repo_id={repo_id}"):
+        nb_rel_path = row["nb_rel_path"]
+        nb_log_file = os.path.join(repo_output_folder,
+                                   f'{nb_rel_path.replace("/", "-")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log')
+        execution_entry = {
+            # "kind": "notebook",
+            # "test_id": argument,
+            "nb_log_file": nb_log_file,
+        }
+        with open(nb_log_file, 'wb') as log_file:
+            try:
+                kind = "notebook"
+                container = client.containers.run(
+                    image=image_name,
+                    volumes={
+                        current_dir: {"bind": "/src", "mode": "ro"},
+                        output_folder: {"bind": "/io", "mode": "rw"},
+                    },
+                    command=[
+                        "python3",
+                        "-u",
+                        "/src/inrepo.py",
+                        "--output-dir",
+                        "/io",
+                        kind,
+                        nb_rel_path,
+                    ],
+                    # run container with mem limit same as singleuser pod memory limit, which is 2g
+                    # https://github.com/jupyterhub/mybinder.org-deploy/blob/4cfbd9c7975d5d8b6cccbb02974be8aca499b228/config/prod.yaml#L52
+                    mem_limit="2g",
+                    # use detach and auto_remove together
+                    # https://github.com/docker/docker-py/blob/master/docker/models/containers.py#L788-L790
+                    detach=True,  # Run container in the background and return a Container object
+                    # auto_remove=True,  # enable auto-removal of the container on daemon side when the container’s process exits.
+                    # remove=True,  # Remove the container when it has finished running
+                )
+            except docker.errors.ContainerError as e:
+                # e.g. memory error
+                text = e.stderr
+                if isinstance(text, bytes):
+                    text = text.decode("utf8", "replace")
+                log_file.write(text)
+                e.container.remove()
+                # raise
+                execution_entry["success"] = 0
+            else:
+                for log in container.logs(follow=True, stream=True):
+                    log_file.write(log)
+                status = container.wait()
+                message = f"\nContainer exited with status: {status}\n"
+                log_file.write(message)
+                container.remove(force=True)
+                execution_entry["success"] = 1 if status["StatusCode"] == 0 else 0
+            finally:
+                execution_entries.append(execution_entry)
+    return execution_entries
 
 
 def build_image(repo_id, repo_url, image_name, resolved_ref):
+    result = {"build_success": None, "build_timestamp": None}
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     image = None
     try:
@@ -40,6 +106,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         return 1
     else:
         logger.info(f"Building {image_name}")
+        result["build_timestamp"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
         cmd = [
             "jupyter-repo2docker", "--ref", resolved_ref,
             "--image-name", image_name,
@@ -48,12 +115,12 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
             # "--no-clean",  # False => Delete source repository after building is done
             "--no-run",
             # "--json-logs",
+            # "--build-memory-limit", "?",
             # "--cache_from",  # List of images to try & re-use cached image layers from.
         ]
         if push:
             cmd.append("--push")
         cmd.append(repo_url)
-        # TODO add memory, cpu limit to this build container? <- same as dind pod
         # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
         container = client.containers.run(
             r2d_image,
@@ -61,6 +128,9 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
             volumes={
                 "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
             },
+            # set memory limit same as in mybinder.org:
+            # https://github.com/jupyterhub/mybinder.org-deploy/blob/4cfbd9c7975d5d8b6cccbb02974be8aca499b228/config/prod.yaml#L33
+            mem_limit="12g",
             # https://stackoverflow.com/questions/59690457/whats-the-difference-between-auto-remove-and-remove-in-docker-sdk-for-python
             # use detach and auto_remove together
             # https://github.com/docker/docker-py/blob/master/docker/models/containers.py#L788-L790
@@ -69,7 +139,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
             # remove=True,  # Remove the container when it has finished running
         )
 
-        log_file_name = f'{repo_id}_{image_name.replace("/", "_")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log'.replace(":", "_")
+        log_file_name = f'{repo_id}_{image_name.replace("/", "-")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log'  # .replace(":", "_")
         with open(os.path.join(build_log_folder, log_file_name), 'wb') as log_file:
             for log in container.logs(follow=True, stream=True):
                 log_file.write(log)
@@ -93,18 +163,25 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         logger.info(f"{repo_id} : {image_name} : {status}")
         # Remove this container. Similar to the docker rm command.
         container.remove(force=True)
-        build_success = 1 if status["StatusCode"] == 0 else 0
-
-        return build_success
+        result["build_success"] = 1 if status["StatusCode"] == 0 else 0
+        return result
 
 
 def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
-    build_success = build_image(repo_id, repo_url, image_name, resolved_ref)
-    if build_success == 1:
-        # TODO execution_entries = run_image(repo_id, image_name)
-        execution_entries = [{"repo_id": repo_id, "image_name": image_name, "build_success": build_success}]
+    e = {"repo_id": repo_id, "image_name": image_name}
+    r = build_image(repo_id, repo_url, image_name, resolved_ref)
+    e.update(r)
+    if e["build_success"] == 1:
+        execution_entries = run_image(repo_id, image_name)
+        if execution_entries:
+            for e_e in execution_entries:
+                e_e.update(e)
+        else:
+            # repo has no notebook
+            execution_entries = [e]
     else:
-        execution_entries = [{"repo_id": repo_id, "image_name": image_name, "build_success": build_success}]
+        # build was unsuccessful
+        execution_entries = [e]
     return execution_entries
 
 
@@ -185,10 +262,13 @@ def build_and_run_all_images(query, image_limit):
             {
                 "repo_id": int,
                 "image_name": str,
+                "build_timestamp": int,
                 "build_success": int,
                 "nb_rel_path": str,
-                "kernel_name": str,
+                # kernel_name can be parsed from execution log file of each notebook (nb_log_file)
+                # "kernel_name": str,
                 "nb_success": int,
+                "nb_log_file": str,
             },
             pk="image_name",
             foreign_keys=[
@@ -210,7 +290,7 @@ def build_and_run_all_images(query, image_limit):
         c += 1
 
 
-def generate_repos_query(launch_limit=1, forks=False, buildpacks=None, repo_limit=0, notebook_limit=0):
+def generate_repos_query(forks=False, buildpacks=None, launches_range=None, notebooks_range=None, repo_limit=0):
     # if fork is 404, it means repo doesnt exists anymore
     # 451 -> "Repository access blocked"
     # where = f'fork IS NOT null AND fork NOT IN (404, 451) '
@@ -224,10 +304,16 @@ def generate_repos_query(launch_limit=1, forks=False, buildpacks=None, repo_limi
     where += f'AND resolved_ref IS NOT null AND resolved_ref!="404" '
     if buildpacks:
         where += f'AND buildpack IN ({", ".join(buildpacks)}) '
-    if launch_limit > 1:
-        where += f'AND launch_count>={launch_limit} '
-    if notebook_limit > 0:
-        where += f'AND nbs_count>={notebook_limit} '
+    if launches_range is not None and type(launches_range) == tuple:
+        if launches_range[0] != "":
+            where += f'AND launch_count>={launches_range[0]} '
+        if launches_range[1] != "":
+            where += f'AND launch_count<{launches_range[1]} '
+    if notebooks_range is not None and type(notebooks_range) == tuple:
+        if notebooks_range[0] != "":
+            where += f'AND nbs_count>={notebooks_range[0]} '
+        if notebooks_range[1] != "":
+            where += f'AND nbs_count<{notebooks_range[1]} '
     query = f"SELECT * FROM {repo_table} WHERE {where} ORDER BY first_launch_ts "
     if repo_limit > 0:
         query += f"LIMIT {repo_limit};"
@@ -245,13 +331,32 @@ def get_r2d_commit(image):
     return image
 
 
+def convert_range(r):
+    # validates and converts range from sting to tuple
+    if r:
+        try:
+            f, t = r.split(",", 1)
+            if f != "":
+                f = int(f)
+            if t != "":
+                t = int(t)
+            r = (f, t)
+        except:
+            raise ValueError(f'range "{r}" is in wrong format')
+        else:
+            return r
+    else:
+        return None
+
+
 def get_args():
     parser = argparse.ArgumentParser(description=f'This script runs repo2docker to build images of repos in '
-                                                 f'{repo_table} table and saves results in {execution_table} table. '
+                                                 f'{repo_table} table and executes each notebook of built repos '
+                                                 f'and then saves results in {execution_table} table. '
                                                  f'By default it excludes repos that do no exist anymore and '
                                                  f'also repos with invalid spec (the spec of last launch). '
                                                  f'To exclude more repos check --forks, --buildpacks '
-                                                 f', --repo_limit, --launch_limit and --notebook_limit flags. ',
+                                                 f', --repo_limit, --launches_range and --notebooks_range flags. ',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-n', '--db_name', required=True)
     parser.add_argument('-r2d', '--r2d_image', required=False, default=get_repo2docker_image(),
@@ -259,12 +364,14 @@ def get_args():
                              'such as "jupyter/repo2docker:0.11.0-98.g8bbced7" '
                              '(https://hub.docker.com/r/jupyter/repo2docker).\n'
                              'Default is what is currently used in mybinder.org')
-    parser.add_argument('-ll', '--launch_limit', type=int, default=1,
-                        help='Minimum number of launches that a repo must have to be built.\n'
-                             'Default is 1, which means build images of all repos.')
-    parser.add_argument('-nl', '--notebook_limit', type=int, default=0,
-                        help='Minimum number of notebooks that a repo must have to be built.\n'
-                             'Default is 0, which means build images of all repos.')
+    parser.add_argument('-lr', '--launches_range', type=str, default='',
+                        help='Range for number of launches that a repo must have to be built.\n'
+                             'For example "10," is to have repos which are launches >= 10 times.\n'
+                             'Default is to build images of all repos.')
+    parser.add_argument('-nr', '--notebooks_range', type=str, default='',
+                        help='Range for number of notebooks that a repo must have to be built.\n'
+                             'For example "0,50" is to have repos which contain 0 <= launches < 50 notebooks.\n'
+                             'Default is to build images of all repos.')
     parser.add_argument('-f', '--forks', required=False, default=False, action='store_true',
                         help='Build images of forked repos too. Default is False.')
     parser.add_argument('-bp', '--buildpacks', required=False, default="",
@@ -293,7 +400,7 @@ def main():
     global verbose
     global logger
     global build_log_folder
-    global run_log_folder
+    global run_output_folder
     global db_name
     global push
     global image_prefix
@@ -305,12 +412,12 @@ def main():
     db_name = args.db_name
     r2d_image = args.r2d_image
     r2d_commit = get_r2d_commit(r2d_image)
-    launch_limit = args.launch_limit
-    notebook_limit = args.notebook_limit
+    launches_range = convert_range(args.launches_range)
+    notebooks_range = convert_range(args.notebooks_range)
     forks = args.forks
     buildpacks = ['"'+bp.strip()+'"' for bp in args.buildpacks.split(",") if bp]
     repo_limit = args.repo_limit
-    query = args.query or generate_repos_query(launch_limit, forks, buildpacks, repo_limit, notebook_limit)
+    query = args.query or generate_repos_query(forks, buildpacks, launches_range, notebooks_range, repo_limit)
     image_limit = args.image_limit
     push = args.push
     image_prefix = args.image_prefix
@@ -320,12 +427,10 @@ def main():
     script_ts = strftime("%Y_%m_%d_%H_%M_%S")
     logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts}'.replace("-", "_")
     logger = get_logger(logger_name)
-    build_output_folder = "build_images"
-    build_log_folder = f"{build_output_folder}/build_images_logs_{script_ts}"
+    build_log_folder = f"build_images/build_images_logs_{script_ts}"
     pathlib.Path(build_log_folder).mkdir(parents=True, exist_ok=True)
-    run_output_folder = "run_images"
-    run_log_folder = f"{run_output_folder}/run_images_logs_{script_ts}"
-    pathlib.Path(run_log_folder).mkdir(parents=True, exist_ok=True)
+    run_output_folder = f"run_images/run_images_logs_{script_ts}"
+    pathlib.Path(run_output_folder).mkdir(parents=True, exist_ok=True)
 
     if verbose:
         print(f"Logs are in {logger_name}.log")
@@ -336,11 +441,12 @@ def main():
 
     build_and_run_all_images(query, image_limit)
     print(f"""\n
-    Building images is done.
-    You could now open the database with `sqlite3 {db_name}` command and 
+    Building and running images is done.
+    You could now open the database with `sqlite3 {db_name}` command and
     then run `select build_success, count(*) from {execution_table} group by "build_success";` 
-    to see how many repos are built successfully or not.
-    You could also run `docker image prune` to delete dangling (unused and untagged) images.
+    to see how many repos are built successfully or not. Or 
+    run `select nb_success, count(*) from {execution_table} group by "nb_success";` 
+    to see how many notebooks are executed successfully or not. 
     """)
 
 
