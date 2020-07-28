@@ -284,7 +284,7 @@ def build_and_run_all_images(query, image_limit):
         logger.info(f"Building images {c}*{image_limit}")
         execution_list, built_images = build_and_run_images(df_chunk)
         logger.info(f"Saving {len(execution_list)} executions")
-        execution.insert_all(execution_list, pk="image_name", batch_size=1000)
+        execution.insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
         logger.info(f"Removing images")
         remove_images(built_images)
         c += 1
