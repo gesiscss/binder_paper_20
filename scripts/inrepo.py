@@ -1,75 +1,116 @@
-"""
-This script is WIP!
+#!/usr/bin/env python3
+"""Commands to run within a repo2docker image
 
-This script is to run inside binder containers.
-It requires python 3 kernel, which is always installed by repo2docker.
-And it also requiers nbformat, nbconvert and jupyter_client packages which are installed by repo2docker by default.
-FIXME: this is not true for dockerfile repos.
-TODO: it is important that which versions of nbformat and nbconvert that repo2docker installs,
- for example now it installs nbcovert 5.6.* but version 6.0.0 is on the way and has breaking changes
-"""
+Runs a single test
 
+Copied from https://github.com/minrk/repo2docker-checker/blob/bd179da5786e08a12ef92295cf02b38a5c2b8ceb/repo2docker_checker/inrepo.py
+"""
+import argparse
+import importlib
+import logging
 import os
-import nbformat
-from nbconvert.preprocessors.execute import executenb
+import tempfile
+
+import tornado.log
+
+log = logging.getLogger(__name__)
 
 
-def execute_notebook(file_path, data, output_dir):
-    # nbformat.NO_CONVERT: This special value can be passed to the reading and writing functions,
-    # to indicate that the notebook should be loaded/saved in the format it’s supplied.
-    nb_node = nbformat.read(file_path, as_version=nbformat.NO_CONVERT)
-    # https://github.com/jupyter/nbconvert/blob/5.6.1/nbconvert/preprocessors/execute.py#L716
-    # https://github.com/jupyter/nbconvert/blob/5.6.1/nbconvert/preprocessors/execute.py#L84
-    # defaults:
-    # timeout = 30
-    # allow_errors = False
-    output_nb_node = executenb(nb_node)
-    # executenb executes nb from top to bottom
-    # nb_node cells has execution_count
-    nb_dir = os.path.join(output_dir, data["dir"])
-    if not os.path.isdir(nb_dir):
-        os.mkdir(nb_dir)
-    nbformat.write(output_nb_node, f"{nb_dir}/{data['file']}", version=nbformat.NO_CONVERT)
+def import_test(modname):
+    """Run an import test
+
+    Just check if it imports!
+    """
+    log.info(f"Testing import of {modname}")
+    importlib.import_module(modname)
 
 
-def execute_notebooks(notebooks):
-    output_dir = "/run_images/nbs"
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
-    for file_path, data in notebooks.items():
-        # TODO use asyncio for execute_notebook?
-        execute_notebook(file_path, data, output_dir)
+def run_notebook(nb_path, output_dir):
+    """Run a notebook tests
+
+    executes the notebook and stores the output in a file
+    """
+
+    import nbformat
+    from jupyter_client.kernelspec import KernelSpecManager
+    from nbconvert.preprocessors.execute import executenb
+
+    log.info(f"Testing notebook {nb_path}")
+    with open(nb_path) as f:
+        nb = nbformat.read(f, as_version=4)
+
+    kernel_specs = KernelSpecManager().get_all_specs()
+    kernel_info = nb.metadata.get("kernelspec") or {}
+    kernel_name = kernel_info.get("name", "")
+    kernel_language = kernel_info.get("language") or ""
+    if kernel_name in kernel_specs:
+        log.info(f"Found kernel {kernel_name}")
+    elif kernel_language:
+        log.warning(
+            f"No such kernel {kernel_name}, falling back on kernel language={kernel_language}"
+        )
+        kernel_language = kernel_language.lower()
+        # no exact name match, re-implement js notebook fallback,
+        # using kernel language instead
+        # nbconvert does not implement this, but it should
+        for kernel_spec_name, kernel_info in kernel_specs.items():
+            if (
+                kernel_info.get("spec", {}).get("language", "").lower()
+                == kernel_language
+            ):
+                log.warning(
+                    f"Using kernel {kernel_spec_name} to provide language: {kernel_language}"
+                )
+                kernel_name = kernel_spec_name
+                break
+        else:
+            log.warning(
+                "Found no matching kernel for name={kernel_name}, language={kernel_language}"
+            )
+            summary_specs = [
+                f"name={name}, language={info['spec'].get('language')}"
+                for name, info in kernel_specs.items()
+            ]
+            log.warning(f"Found kernel specs: {'; '.join(summary_specs)}")
+
+    exported = executenb(
+        nb, cwd=os.path.dirname(nb_path), kernel_name=kernel_name, timeout=600
+    )
+    rel_path = os.path.relpath(nb_path, os.getcwd())
+    dest_path = os.path.join(output_dir, "notebooks", rel_path)
+    log.info(f"Saving exported notebook to {dest_path}")
+    try:
+        os.makedirs(os.path.dirname(dest_path))
+    except FileExistsError:
+        pass
+
+    with open(dest_path, "w") as f:
+        nbformat.write(exported, f)
 
 
-def get_notebooks():
-    # cwd must be /home/jovyan for non-dockerfile repos
-    cwd = os.getcwd()
-    notebooks = {}
-    for root, dirs, files in os.walk(cwd):
-        for file in files:
-            if file.endswith(".ipynb"):
-                file_path = os.path.join(root, file)
-                rel_file_path = file_path.split(cwd+"/", 1)[-1]
-                rel_dir = rel_file_path.rsplit(file, 1)[0]
-                nb = {file_path: {"file": file, "root": root, "dir": rel_dir, "file_path": rel_file_path}}
-                # print nb dict, it will be written into log file in run_images.py
-                print(nb)
-                notebooks.update(nb)
-    return notebooks
+test_functions = {
+    "import": import_test,
+    "notebook": run_notebook,
+}
 
 
 def main():
-    # import time
-    # time.sleep(2)
-    notebooks = get_notebooks()
-    contains_nbs = 1 if notebooks else 0
-    print({"contains_nbs": contains_nbs, "count": len(notebooks)})
-    # TODO
-    # nbs_executed = execute_notebooks(notebooks)
-    # print({"nbs_executed": nbs_executed})
-    # nbs_same_output = compare_nbs(notebooks)
-    # print({"nbs_same_output": nbs_same_output})
+    tornado.log.enable_pretty_logging()
+    logging.getLogger().setLevel(logging.INFO)
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=tempfile.gettempdir(),
+        help="Directory to store test results",
+    )
+    parser.add_argument("test_type", choices=sorted(test_functions))
+    parser.add_argument("test", type=str)
+    opts = parser.parse_args()
+    test_f = test_functions[opts.test_type]
+    test_f(opts.test, opts.output_dir)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
