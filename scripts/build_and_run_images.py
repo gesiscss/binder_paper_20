@@ -123,7 +123,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         cmd.append(repo_url)
         # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
         container = client.containers.run(
-            r2d_image,
+            r2d_version,
             cmd,
             volumes={
                 "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
@@ -168,7 +168,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
 
 
 def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
-    e = {"repo_id": repo_id, "image_name": image_name}
+    e = {"repo_id": repo_id, "image_name": image_name, "r2d_version": r2d_version}
     r = build_image(repo_id, repo_url, image_name, resolved_ref)
     e.update(r)
     if e["build_success"] == 1:
@@ -262,6 +262,7 @@ def build_and_run_all_images(query, image_limit):
             {
                 "repo_id": int,
                 "image_name": str,
+                "r2d_version": str,
                 "build_timestamp": int,
                 "build_success": int,
                 "nb_rel_path": str,
@@ -359,7 +360,7 @@ def get_args():
                                                  f', --repo_limit, --launches_range and --notebooks_range flags. ',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-n', '--db_name', required=True)
-    parser.add_argument('-r2d', '--r2d_image', required=False, default=get_repo2docker_image(),
+    parser.add_argument('-r2d', '--r2d_version', required=False, default=get_repo2docker_image(),
                         help='Full image name of the repo2docker to be used for image building, '
                              'such as "jupyter/repo2docker:0.11.0-98.g8bbced7" '
                              '(https://hub.docker.com/r/jupyter/repo2docker).\n'
@@ -404,14 +405,14 @@ def main():
     global db_name
     global push
     global image_prefix
-    global r2d_image
+    global r2d_version
     global r2d_commit
     global max_workers
 
     args = get_args()
     db_name = args.db_name
-    r2d_image = args.r2d_image
-    r2d_commit = get_r2d_commit(r2d_image)
+    r2d_version = args.r2d_version
+    r2d_commit = get_r2d_commit(r2d_version)
     launches_range = convert_range(args.launches_range)
     notebooks_range = convert_range(args.notebooks_range)
     forks = args.forks
@@ -435,9 +436,9 @@ def main():
     if verbose:
         print(f"Logs are in {logger_name}.log")
         print(f"query: {query}")
-        print(f"Using {r2d_image}")
+        print(f"Using {r2d_version}")
     logger.info(query)
-    logger.info(f"Using {r2d_image}")
+    logger.info(f"Using {r2d_version}")
 
     build_and_run_all_images(query, image_limit)
     print(f"""\n
