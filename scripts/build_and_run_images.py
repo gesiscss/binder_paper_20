@@ -24,8 +24,9 @@ def run_image(repo_id, image_name):
     """
     db = Database(db_name)
     output_folder = os.path.abspath(run_output_folder)
-    repo_folder = f'{repo_id}_{image_name.replace("/", "-")}'
+    repo_folder = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}'
     repo_output_folder = os.path.join(output_folder, repo_folder)
+    pathlib.Path(repo_output_folder).mkdir(parents=True, exist_ok=True)
     current_dir = os.path.dirname(os.path.realpath(__file__))
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     execution_entries = []
@@ -36,16 +37,17 @@ def run_image(repo_id, image_name):
         execution_entry = {
             # "kind": "notebook",
             # "test_id": argument,
+            "nb_rel_path": nb_rel_path,
             "nb_log_file": nb_log_file,
         }
-        with open(nb_log_file, 'wb') as log_file:
+        with open(nb_log_file, 'w') as log_file:
             try:
                 kind = "notebook"
                 container = client.containers.run(
                     image=image_name,
                     volumes={
                         current_dir: {"bind": "/src", "mode": "ro"},
-                        output_folder: {"bind": "/io", "mode": "rw"},
+                        repo_output_folder: {"bind": "/io", "mode": "rw"},
                     },
                     command=[
                         "python3",
@@ -73,15 +75,17 @@ def run_image(repo_id, image_name):
                 log_file.write(text)
                 e.container.remove()
                 # raise
-                execution_entry["success"] = 0
+                execution_entry["nb_success"] = 0
             else:
                 for log in container.logs(follow=True, stream=True):
+                    if isinstance(log, bytes):
+                        log = log.decode("utf8", "replace")
                     log_file.write(log)
                 status = container.wait()
                 message = f"\nContainer exited with status: {status}\n"
                 log_file.write(message)
                 container.remove(force=True)
-                execution_entry["success"] = 1 if status["StatusCode"] == 0 else 0
+                execution_entry["nb_success"] = 1 if status["StatusCode"] == 0 else 0
             finally:
                 execution_entries.append(execution_entry)
     return execution_entries
@@ -93,20 +97,29 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     image = None
     try:
         image = client.images.get(image_name)
+        logger.info(f"Image {image_name} found locally")
     except docker.errors.ImageNotFound:
         try:
             repository, tag = image_name.rsplit(":", 1)
             image = client.images.pull(repository, tag)
+            logger.info(f"Image {image_name} found in registry")
         except docker.errors.NotFound:
+            # will build
             pass
+    else:
+        logger.info(f"Pushing it to registry")
+        # if found locally, push to registry
+        repository, tag = image_name.rsplit(":", 1)
+        client.images.push(repository, tag)
 
     if image:
         # image exists locally or in the registry
-        logger.info(f"Image {image_name} is already built")
-        return 1
+        # logger.info(f"Image {image_name} is already built")
+        result["build_success"] = 1
+        result["build_timestamp"] = image.attrs["Created"].split(".")[0]
+        return result
     else:
         logger.info(f"Building {image_name}")
-        result["build_timestamp"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
         cmd = [
             "jupyter-repo2docker", "--ref", resolved_ref,
             "--image-name", image_name,
@@ -139,9 +152,11 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
             # remove=True,  # Remove the container when it has finished running
         )
 
-        log_file_name = f'{repo_id}_{image_name.replace("/", "-")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log'  # .replace(":", "_")
-        with open(os.path.join(build_log_folder, log_file_name), 'wb') as log_file:
+        log_file_name = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log'
+        with open(os.path.join(build_log_folder, log_file_name), 'w') as log_file:
             for log in container.logs(follow=True, stream=True):
+                if isinstance(log, bytes):
+                    log = log.decode("utf8", "replace")
                 log_file.write(log)
 
         # if log_dict["phase"] == "failure":
@@ -164,11 +179,13 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         # Remove this container. Similar to the docker rm command.
         container.remove(force=True)
         result["build_success"] = 1 if status["StatusCode"] == 0 else 0
+        result["build_timestamp"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
         return result
 
 
 def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
-    e = {"repo_id": repo_id, "image_name": image_name, "r2d_version": r2d_version}
+    e = {"repo_id": repo_id, "image_name": image_name,
+         "r2d_version": r2d_version, "script_timestamp": script_ts}
     r = build_image(repo_id, repo_url, image_name, resolved_ref)
     e.update(r)
     if e["build_success"] == 1:
@@ -196,11 +213,7 @@ def build_and_run_images(df_repos):
         index, row = next(rows)
         while True:
             if row is not None:
-                # A tag name must be valid ASCII and may contain lowercase and uppercase letters, digits, underscores,
-                # periods and dashes.
-                # A tag name may not start with a period or a dash and may contain a maximum of 128 characters.
-                tag = f'{r2d_commit}-{row["resolved_ref"]}'
-                image_name = get_image_name(row["provider"], row["last_spec"], image_prefix, tag)
+                image_name = get_image_name(row["provider"], row["last_spec"], image_prefix, row["resolved_ref"])
                 # TODO before each job, check available disk size for docker and warn
                 job = executor.submit(build_and_run_image, row["id"], row["repo_url"], image_name, row["resolved_ref"])
                 jobs[job] = f'{row["id"]}:{row["repo_url"]}'
@@ -260,10 +273,11 @@ def build_and_run_all_images(query, image_limit):
     if execution_table not in db.table_names():
         db[execution_table].create(
             {
+                "script_timestamp": str,
                 "repo_id": int,
                 "image_name": str,
                 "r2d_version": str,
-                "build_timestamp": int,
+                "build_timestamp": str,
                 "build_success": int,
                 "nb_rel_path": str,
                 # kernel_name can be parsed from execution log file of each notebook (nb_log_file)
@@ -271,7 +285,7 @@ def build_and_run_all_images(query, image_limit):
                 "nb_success": int,
                 "nb_log_file": str,
             },
-            pk="image_name",
+            # pk="image_name",
             foreign_keys=[
                 ("repo_id", repo_table, "id")
             ],
@@ -285,7 +299,8 @@ def build_and_run_all_images(query, image_limit):
         logger.info(f"Building images {c}*{image_limit}")
         execution_list, built_images = build_and_run_images(df_chunk)
         logger.info(f"Saving {len(execution_list)} executions")
-        execution.insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
+        # execution.insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
+        execution.insert_all(execution_list, batch_size=1000)
         logger.info(f"Removing images")
         remove_images(built_images)
         c += 1
@@ -321,15 +336,6 @@ def generate_repos_query(forks=False, buildpacks=None, launches_range=None, note
     else:
         query += ";"
     return query
-
-
-def get_r2d_commit(image):
-    if image.endswith(".dirty"):
-        image = image[:-6]
-    image = image.split(":")[-1].split(".")[-1]
-    if image.startswith("g"):
-        image = image[1:]
-    return image
 
 
 def convert_range(r):
@@ -406,13 +412,12 @@ def main():
     global push
     global image_prefix
     global r2d_version
-    global r2d_commit
     global max_workers
+    global script_ts
 
     args = get_args()
     db_name = args.db_name
     r2d_version = args.r2d_version
-    r2d_commit = get_r2d_commit(r2d_version)
     launches_range = convert_range(args.launches_range)
     notebooks_range = convert_range(args.notebooks_range)
     forks = args.forks
@@ -425,12 +430,13 @@ def main():
     max_workers = args.max_workers
     verbose = args.verbose
 
-    script_ts = strftime("%Y_%m_%d_%H_%M_%S")
-    logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts}'.replace("-", "_")
+    script_ts = datetime.utcnow().replace(microsecond=0).isoformat()
+    script_ts_safe = script_ts.replace(":", "-")
+    logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'
     logger = get_logger(logger_name)
-    build_log_folder = f"build_images/build_images_logs_{script_ts}"
+    build_log_folder = f"build_images/build_images_logs_{script_ts_safe}"
     pathlib.Path(build_log_folder).mkdir(parents=True, exist_ok=True)
-    run_output_folder = f"run_images/run_images_logs_{script_ts}"
+    run_output_folder = f"run_images/run_images_logs_{script_ts_safe}"
     pathlib.Path(run_output_folder).mkdir(parents=True, exist_ok=True)
 
     if verbose:

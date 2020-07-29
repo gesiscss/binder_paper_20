@@ -77,8 +77,9 @@ For more information please run `python build_and_run_images.py --help`.
 
 column name | desc
 ----- | ----
-image_name | docker image name, tag contains r2d commit and resolved ref
+script_timestamp | when the script is executed
 repo_id | foreign key reference to id column in repo table
+image_name | docker image name
 r2d_version | 
 build_timestamp | 
 build_success | 1 or 0
