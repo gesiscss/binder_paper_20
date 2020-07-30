@@ -89,6 +89,7 @@ def run_image(repo_id, repo_url, image_name):
                         f"limit is {notebooks_range} but it has {len(notebooks)} notebook")
             return execution_entries
 
+    logger.info(f"{repo_id}:{repo_url} executing {len(notebooks)} notebooks")
     # execute each notebook
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     for nb_rel_path in notebooks:
