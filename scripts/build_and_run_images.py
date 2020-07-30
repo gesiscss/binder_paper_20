@@ -25,6 +25,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
         try:
             container = client.containers.run(
                 image=image_name,
+                name=f"{repo_id}-detect-notebooks",
                 volumes={
                     current_dir: {"bind": "/src", "mode": "ro"},
                     repo_output_folder: {"bind": "/io", "mode": "rw"},
@@ -92,7 +93,9 @@ def run_image(repo_id, repo_url, image_name):
     logger.info(f"{repo_id}:{repo_url} executing {len(notebooks)} notebooks")
     # execute each notebook
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
+    nb_count = 0
     for nb_rel_path in notebooks:
+        nb_count += 1
         _, ts_safe = get_utc_ts()
         nb_log_file = os.path.join(repo_output_folder,
                                    f'{nb_rel_path.replace("/", "-")}_{ts_safe}.log')
@@ -107,6 +110,7 @@ def run_image(repo_id, repo_url, image_name):
                 kind = "notebook"
                 container = client.containers.run(
                     image=image_name,
+                    name=f"{repo_id}-execute-nb-{nb_count}",
                     volumes={
                         current_dir: {"bind": "/src", "mode": "ro"},
                         repo_output_folder: {"bind": "/io", "mode": "rw"},
@@ -202,9 +206,9 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
             try:
                 # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
                 container = client.containers.run(
-                    r2d_version,
-                    cmd,
-                    name=f"{r2d_version}:{repo_id}".replace("/", "_").replace(":", "_"),
+                    image=r2d_version,
+                    command=cmd,
+                    name=f"{repo_id}-image-build",
                     volumes={
                         "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
                     },
