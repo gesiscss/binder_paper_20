@@ -5,7 +5,7 @@ import pandas as pd
 from docker.errors import APIError
 from requests import ReadTimeout
 from utils import get_repo2docker_image, get_logger, get_image_name, get_utc_ts, \
-     REPO_TABLE as repo_table, NOTEBOOK_TABLE as notebook_table, EXECUTION_TABLE as execution_table, \
+     REPO_TABLE as repo_table, EXECUTION_TABLE as execution_table, \
      DEFAULT_IMAGE_PREFIX as default_image_prefix
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
@@ -17,11 +17,6 @@ DOCKER_TIMEOUT = 300
 
 
 def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
-    notebook = {
-        "repo_id": repo_id,
-        "script_timestamp": script_ts,
-        "r2d_version": r2d_version,
-    }
     _, ts_safe = get_utc_ts()
     notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}.log')
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
@@ -64,9 +59,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
             with open(notebooks_file, 'r') as f:
                 for line in f:
                     nb_rel_path = line.rstrip()
-                    nb = {"nb_rel_path": nb_rel_path}
-                    nb.update(notebook)
-                    notebooks.append(nb)
+                    notebooks.append(nb_rel_path)
     return notebooks
 
 
@@ -86,23 +79,19 @@ def run_image(repo_id, repo_url, image_name):
         logger.info(f"{repo_id}:{repo_url} has no notebook")
         return execution_entries
 
-    # save notebooks
-    logger.info(f"{repo_id}:{repo_url} saving {len(notebooks)} notebooks")
-    db = Database(db_name)
-    db[notebook_table].insert_all(notebooks, batch_size=1000)
-
     if notebooks_range is not None and type(notebooks_range) == tuple:
         f = 0 if notebooks_range[0] == "" else notebooks_range[0]
         t = len(notebooks)+1 if notebooks_range[1] == "" else notebooks_range[1]
         if not (f <= len(notebooks) < t):
+            for nb_rel_path in notebooks:
+                execution_entries.append({"nb_rel_path": nb_rel_path})
             logger.info(f"{repo_id}:{repo_url} skipping notebooks execution, "
                         f"limit is {notebooks_range} but it has {len(notebooks)} notebook")
             return execution_entries
 
     # execute each notebook
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
-    for nb in notebooks:
-        nb_rel_path = nb["nb_rel_path"]
+    for nb_rel_path in notebooks:
         _, ts_safe = get_utc_ts()
         nb_log_file = os.path.join(repo_output_folder,
                                    f'{nb_rel_path.replace("/", "-")}_{ts_safe}.log')
@@ -214,7 +203,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                 container = client.containers.run(
                     r2d_version,
                     cmd,
-                    name=f"{r2d_version}:{repo_id}",
+                    name=f"{r2d_version}:{repo_id}".replace("/", "_").replace(":", "_"),
                     volumes={
                         "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
                     },
@@ -353,18 +342,6 @@ def build_and_run_all_images(query, image_limit):
     db = Database(db_name)
     df_repos = pd.read_sql_query(query, db.conn, chunksize=image_limit)
 
-    if notebook_table not in db.table_names():
-        db[notebook_table].create(
-            {
-                "script_timestamp": str,
-                "repo_id": int,
-                "nb_rel_path": str,
-                "r2d_version": str,
-            },
-            foreign_keys=[
-                ("repo_id", repo_table, "id")
-            ],
-        )
     if execution_table not in db.table_names():
         db[execution_table].create(
             {
@@ -387,15 +364,14 @@ def build_and_run_all_images(query, image_limit):
             # all null by default
             # defaults={}
         )
-    execution = db[execution_table]
 
     c = 1
     for df_chunk in df_repos:
         logger.info(f"Building images {c}*{image_limit}")
         execution_list, built_images = build_and_run_images(df_chunk)
         logger.info(f"Saving {len(execution_list)} executions")
-        # execution.insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
-        execution.insert_all(execution_list, batch_size=1000)
+        # db[execution_table].insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
+        db[execution_table].insert_all(execution_list, batch_size=1000)
         logger.info(f"Removing images")
         remove_images(built_images)
         c += 1
@@ -458,7 +434,7 @@ def get_args():
     parser.add_argument('-n', '--db_name', required=True)
     parser.add_argument('-r2d', '--r2d_version', required=False, default=get_repo2docker_image(),
                         help='Full image name of the repo2docker to be used for image building, '
-                             'such as "jupyter/repo2docker:0.11.0-98.g8bbced7" '
+                             'such as "jupyter/repo2docker:0.11.0-102.g163718b" '
                              '(https://hub.docker.com/r/jupyter/repo2docker).\n'
                              'Default is what is currently used in mybinder.org')
     parser.add_argument('-lr', '--launches_range', type=str, default='',

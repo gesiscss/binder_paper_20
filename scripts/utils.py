@@ -18,7 +18,6 @@ from repo2docker.utils import chdir
 
 LAUNCH_TABLE = "mybinderlaunch"
 REPO_TABLE = "repo"
-NOTEBOOK_TABLE = "notebook"
 EXECUTION_TABLE = "execution"
 
 DEFAULT_IMAGE_PREFIX = "bp20-"
