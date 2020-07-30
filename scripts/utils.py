@@ -1,12 +1,8 @@
 import logging
-import hashlib
-import string
-import escapism
 import time
 import requests
 import subprocess
 import tempfile
-import os
 from datetime import datetime
 from yaml import safe_load
 from github import Github, GithubException
@@ -15,6 +11,7 @@ from sqlite_utils import Database
 from binderhub.repoproviders import strip_suffix, GitHubRepoProvider, GitRepoProvider, \
      GitLabRepoProvider, GistRepoProvider, ZenodoProvider, FigshareProvider, \
      HydroshareProvider, DataverseProvider
+from binderhub.builder import _safe_build_slug
 from repo2docker.buildpacks import CondaBuildPack, DockerBuildPack, JuliaProjectTomlBuildPack, JuliaRequireBuildPack, \
     LegacyBinderDockerBuildPack, NixBuildPack, PipfileBuildPack, PythonBuildPack, RBuildPack
 from repo2docker.utils import chdir
@@ -49,6 +46,12 @@ REPO_PROVIDERS = {
     'Hydroshare': HydroshareProvider,
     'Dataverse': DataverseProvider,
 }
+
+
+def get_utc_ts():
+    ts = datetime.utcnow().replace(microsecond=0).isoformat()
+    ts_safe = ts.replace(":", "-")
+    return ts, ts_safe
 
 
 def get_org(provider, spec):
@@ -145,29 +148,6 @@ def get_repo_url(provider, spec):
     return repo_url
 
 
-def _safe_build_slug(build_slug, limit, hash_length=6):
-    """
-    Copied from https://github.com/jupyterhub/binderhub/blob/58a0b72021d17264519438f6e06f452021617a35/binderhub/builder.py#L166
-
-    This function catches a bug where build slug may not produce a valid image name
-    (e.g. repo name ending with _, which results in image name ending with '-' which is invalid).
-    This ensures that the image name is always safe, regardless of build slugs returned by providers
-    (rather than requiring all providers to return image-safe build slugs below a certain length).
-    Since this changes the image name generation scheme, all existing cached images will be invalidated.
-    """
-    build_slug_hash = hashlib.sha256(build_slug.encode('utf-8')).hexdigest()
-    safe_chars = set(string.ascii_letters + string.digits)
-
-    def escape(s):
-        return escapism.escape(s, safe=safe_chars, escape_char='-')
-
-    build_slug = escape(build_slug)
-    return '{name}-{hash}'.format(
-        name=build_slug[:limit - hash_length - 1],
-        hash=build_slug_hash[:hash_length],
-    ).lower()
-
-
 def get_image_name(provider, spec, image_prefix, ref):
     if provider not in REPO_PROVIDERS:
         raise Exception(f"unknown provider: {provider}")
@@ -195,15 +175,10 @@ def get_repo_data_from_git(ref, repo_url):
         "resolved_ref_date": None,
         "binder_dir": None,
         "buildpack": None,
-        "notebooks": None,
-        "nbs_count": None,
     }
     with tempfile.TemporaryDirectory() as tmp_dir_path:
         command = ["git", "clone", repo_url, tmp_dir_path]
         git_execute(command, env={"GIT_TERMINAL_PROMPT": "0"})
-
-        # command = ["git", "reset", "--hard", "HEAD"]
-        # git_execute(command, tmp_dir_path)
 
         # check if resolved ref exists in repo
         # it is possible that a commit, which is launched, is removed from history
@@ -258,18 +233,6 @@ def get_repo_data_from_git(ref, repo_url):
 
                 repo_data["binder_dir"] = picked_buildpack.binder_dir
                 repo_data["buildpack"] = picked_buildpack.__class__.__name__
-
-            # get notebooks
-            # TODO what if somehow more notebooks are added into repo by repo2docker? (e.g. postBuild)
-            notebooks = []
-            with chdir(tmp_dir_path):
-                for root, dirs, files in os.walk("."):
-                    for file in files:
-                        if file.endswith(".ipynb"):
-                            rel_file_path = os.path.relpath(os.path.join(root, file), tmp_dir_path)
-                            notebooks.append(rel_file_path)
-            repo_data["notebooks"] = notebooks
-            repo_data["nbs_count"] = len(notebooks)
     return repo_data
 
 

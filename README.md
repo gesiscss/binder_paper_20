@@ -30,7 +30,7 @@ repo_url |
 
 2. [create_repo_table.py](scripts/create_repo_table.py)
 
-Reads output of the first script (`mybinderlaunch` table) and creates `repo` and `notebook` tables. 
+Reads output of the first script (`mybinderlaunch` table) and creates `repo` table. 
 For more information please run `python create_repo_table.py --help`.
 
 `repo` table:
@@ -53,14 +53,6 @@ renamed | 0 (not renamed) or number of times that repo is renamed
 launch_count | number of launches
 binder_dir | "" or "binder" or ".binder"
 buildpack | which Buildpack of r2d is used
-nbs_count | number of notebooks in repo
-
-`notebook` table:
-
-column name | desc
------ | ----
-repo_id | foreign key reference to id column in repo table
-nb_rel_path | notebook's relative path in repo
 
 This script also adds a new column to `launch` table:
 
@@ -86,6 +78,15 @@ build_success | 1 or 0
 nb_rel_path | notebook's relative path in repo
 nb_success | 1 or 0, if notebook execution successful or not
 nb_log_file | logs from notebook execution, e.g. kernel info can be found there
+
+`notebook` table:
+
+column name | desc
+----- | ----
+script_timestamp | when the script is executed
+repo_id | foreign key reference to id column in repo table
+nb_rel_path | notebook's relative path in repo
+r2d_version | 
 
 Note: docker version is 19.03.5 (https://github.com/jupyterhub/binderhub/blob/d861de48be8a3eae6cb35c22a976cffbebc45c69/helm-chart/binderhub/values.yaml#L146-L152)
 

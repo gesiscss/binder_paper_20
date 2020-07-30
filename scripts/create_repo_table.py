@@ -1,6 +1,7 @@
 """
 Script to extract repo data from launch events table.
 """
+import os
 import argparse
 import pandas as pd
 from datetime import datetime
@@ -8,15 +9,16 @@ from concurrent.futures.process import ProcessPoolExecutor
 # from concurrent.futures.thread import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from sqlite_utils import Database
-from time import strftime, sleep
+from time import sleep
 from utils import get_ref, get_repo_data_from_github_api, get_logger, GithubException, \
-    get_repo_data_from_git, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table, NOTEBOOK_TABLE as notebook_table
+    get_repo_data_from_git, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table, \
+    get_utc_ts
 
 
 def get_repos_from_launch_table(db, providers, launch_limit):
     # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_sql_query.html
     # https://developer.github.com/v3/#rate-limiting
-    chunk_size = 1000
+    chunk_size = 10000
     # NOTE: this query orders launch table by timestamp and creates a temporary table t
     # and this temporary table is used to select and also to concat specs, so we have specs in time order and
     # we can use the last launched one to fetch resolved_ref
@@ -65,6 +67,7 @@ def get_repo_data(repo_entry, access_token):
                 if verbose:
                     print(msg)
                 sleep(minutes_until_reset * 60)
+                # sleep(minutes_until_reset * 60 / 2)
                 # continue to process last repo again
                 continue
             else:
@@ -116,26 +119,10 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
                 "launch_count": int,
                 "binder_dir": str,
                 "buildpack": str,
-                "nbs_count": int,
             },
             pk="id",
         )
         repos = db[repo_table]
-
-    if access_token:
-        if notebook_table in db.table_names():
-            raise Exception(f"table {notebook_table} already exists in {db_name}")
-        else:
-            db[notebook_table].create(
-                {
-                    "repo_id": int,
-                    "nb_rel_path": str,
-                },
-                foreign_keys=[
-                    ("repo_id", repo_table, "id")
-                ],
-            )
-            notebooks = db[notebook_table]
 
     repos_df_iter, count = get_repos_from_launch_table(db, providers, launch_limit)
     if verbose:
@@ -143,13 +130,11 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
         logger.info(msg)
         print(msg)
     repo_count = 0
-    notebook_count = 0
     jobs_done = 0
     # internal id
     id_ = 0
     for df_chunk in repos_df_iter:
         repos_list = []
-        notebooks_list = []
         rows = df_chunk.iterrows()
         # with ThreadPoolExecutor(max_workers=max_workers) as executor:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -183,12 +168,6 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
                         id_repo_url = jobs[job]
                         try:
                             r = job.result()
-                            if "notebooks" in r and r["notebooks"]:
-                                for nb_rel_path in r["notebooks"]:
-                                    notebooks_list.append({"repo_id": r["id"], "nb_rel_path": nb_rel_path})
-                                del r["notebooks"]
-                            elif "notebooks" in r:
-                                del r["notebooks"]
                             repos_list.append(r)
                             jobs_done += 1
                         except Exception as exc:
@@ -212,15 +191,9 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
         repos.insert_all(repos_list, pk="id")
         repo_count += len(df_chunk)
         msg = f"{repo_count} ({jobs_done}) repos are processed"
-        if access_token:
-            msg += f"\n now going to save {len(notebooks_list)} notebooks"
         logger.info(msg)
         if verbose:
             print(msg)
-
-        if access_token:
-            notebooks.insert_all(notebooks_list, batch_size=1000)
-            notebook_count += len(notebooks_list)
         # print(df_chunk.dtypes)
 
     if access_token:
@@ -256,7 +229,6 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
     db.vacuum()
     end_time = datetime.now()
     msg = f"repo table is created with {repo_count} ({count}) entries"
-    msg += f"\nnotebook table is created with {notebook_count} entries"
     msg += f"\nduration: {end_time - start_time}"
     if verbose:
         print(f"finished at {end_time}")
@@ -276,7 +248,7 @@ def get_args():
     parser.add_argument('-t', '--access_token', required=False,
                         help='Access token for GitHub API. If access token is not provided, '
                              'these additional data will not be fetched: '
-                             '`fork`, `remote_id`, `resolved_ref`, `buildpack`, `notebooks`, `renamed`...\n'
+                             '`fork`, `remote_id`, `resolved_ref`, `buildpack`, `renamed`...\n'
                              'Without authentication GitHub API allows 60 requests per hour, '
                              'with authentication it is 5000 (https://developer.github.com/v3/#rate-limiting).\n'
                              'To create one: https://github.com/settings/tokens/new')
@@ -311,7 +283,8 @@ def main():
     max_workers = args.max_workers
     verbose = args.verbose
 
-    logger_name = f'create_repo_table_at_{strftime("%Y_%m_%d_%H_%M_%S")}'.replace("-", "_")
+    _, script_ts_safe = get_utc_ts()
+    logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'.replace("-", "_")
     logger = get_logger(logger_name)
     if verbose:
         print(f"Logs are in {logger_name}.log")

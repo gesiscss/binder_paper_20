@@ -4,11 +4,10 @@ Parser for mybinder.org events archive (https://archive.analytics.mybinder.org/)
 import argparse
 import pandas as pd
 from datetime import datetime, timedelta
-from time import strftime
 from sqlite_utils import Database
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
-from utils import get_ref, get_org, get_repo_url, get_logger, get_mybinder_repo2docker_history, \
+from utils import get_ref, get_org, get_repo_url, get_logger, get_mybinder_repo2docker_history, get_utc_ts, \
                   LAUNCH_TABLE as launch_table
 
 
@@ -225,8 +224,9 @@ def main():
     if start_date > end_date:
         raise Exception(f"Start date cant be later then end date: start_date: {start_date}, end_date: {end_date}")
 
+    _, script_ts_safe = get_utc_ts()
     db_name = args.db_name
-    db_name = f'{db_name}_at_{strftime("%Y_%m_%d_%H_%M_%S")}.db'.replace("-", "_")
+    db_name = f'{db_name}_at_{script_ts_safe}.db'.replace("-", "_")
     max_workers = args.max_workers
     verbose = args.verbose
 

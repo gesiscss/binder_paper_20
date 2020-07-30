@@ -1,14 +1,12 @@
 import docker
 import argparse
 import os
-import pathlib
 import pandas as pd
 from docker.errors import APIError
 from requests import ReadTimeout
-from utils import get_repo2docker_image, get_logger, get_image_name, \
+from utils import get_repo2docker_image, get_logger, get_image_name, get_utc_ts, \
      REPO_TABLE as repo_table, NOTEBOOK_TABLE as notebook_table, EXECUTION_TABLE as execution_table, \
      DEFAULT_IMAGE_PREFIX as default_image_prefix
-from time import strftime
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
@@ -18,22 +16,96 @@ from sqlite_utils import Database
 DOCKER_TIMEOUT = 300
 
 
-def run_image(repo_id, image_name):
+def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
+    notebook = {
+        "repo_id": repo_id,
+        "script_timestamp": script_ts,
+        "r2d_version": r2d_version,
+    }
+    _, ts_safe = get_utc_ts()
+    notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}.log')
+    client = docker.from_env(timeout=DOCKER_TIMEOUT)
+    notebooks = []
+    with open(notebooks_log_file, 'w') as log_file:
+        try:
+            container = client.containers.run(
+                image=image_name,
+                volumes={
+                    current_dir: {"bind": "/src", "mode": "ro"},
+                    repo_output_folder: {"bind": "/io", "mode": "rw"},
+                },
+                command=[
+                    "python3",
+                    "-u",
+                    "/src/inrepo_detect_notebooks.py",
+                    "--output-dir",
+                    "/io"
+                ],
+                detach=True
+            )
+        except docker.errors.ContainerError as e:
+            text = e.stderr
+            if isinstance(text, bytes):
+                text = text.decode("utf8", "replace")
+            log_file.write(text)
+            logger.exception(f"{repo_id}:{image_name}:detect_notebooks")
+            e.container.remove()
+        else:
+            for log in container.logs(follow=True, stream=True):
+                if isinstance(log, bytes):
+                    log = log.decode("utf8", "replace")
+                log_file.write(log)
+            status = container.wait()
+            message = f"\nContainer exited with status: {status}\n"
+            log_file.write(message)
+            container.remove(force=True)
+
+            notebooks_file = os.path.join(repo_output_folder, 'notebooks.txt')
+            with open(notebooks_file, 'r') as f:
+                for line in f:
+                    nb_rel_path = line.rstrip()
+                    nb = {"nb_rel_path": nb_rel_path}
+                    nb.update(notebook)
+                    notebooks.append(nb)
+    return notebooks
+
+
+def run_image(repo_id, repo_url, image_name):
     """This function is mostly copied from
     https://github.com/minrk/repo2docker-checker/blob/bd179da5786e08a12ef92295cf02b38a5c2b8ceb/repo2docker_checker/checker.py#L160
     """
-    db = Database(db_name)
     output_folder = os.path.abspath(run_output_folder)
     repo_folder = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}'
     repo_output_folder = os.path.join(output_folder, repo_folder)
-    pathlib.Path(repo_output_folder).mkdir(parents=True, exist_ok=True)
+    os.makedirs(repo_output_folder, exist_ok=True)
     current_dir = os.path.dirname(os.path.realpath(__file__))
-    client = docker.from_env(timeout=DOCKER_TIMEOUT)
+
+    notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir)
     execution_entries = []
-    for row in db[notebook_table].rows_where(f"repo_id={repo_id}"):
-        nb_rel_path = row["nb_rel_path"]
+    if not notebooks:
+        logger.info(f"{repo_id}:{repo_url} has no notebook")
+        return execution_entries
+
+    # save notebooks
+    logger.info(f"{repo_id}:{repo_url} saving {len(notebooks)} notebooks")
+    db = Database(db_name)
+    db[notebook_table].insert_all(notebooks, batch_size=1000)
+
+    if notebooks_range is not None and type(notebooks_range) == tuple:
+        f = 0 if notebooks_range[0] == "" else notebooks_range[0]
+        t = len(notebooks)+1 if notebooks_range[1] == "" else notebooks_range[1]
+        if not (f <= len(notebooks) < t):
+            logger.info(f"{repo_id}:{repo_url} skipping notebooks execution, "
+                        f"limit is {notebooks_range} but it has {len(notebooks)} notebook")
+            return execution_entries
+
+    # execute each notebook
+    client = docker.from_env(timeout=DOCKER_TIMEOUT)
+    for nb in notebooks:
+        nb_rel_path = nb["nb_rel_path"]
+        _, ts_safe = get_utc_ts()
         nb_log_file = os.path.join(repo_output_folder,
-                                   f'{nb_rel_path.replace("/", "-")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log')
+                                   f'{nb_rel_path.replace("/", "-")}_{ts_safe}.log')
         execution_entry = {
             # "kind": "notebook",
             # "test_id": argument,
@@ -134,51 +206,62 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         if push:
             cmd.append("--push")
         cmd.append(repo_url)
-        # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
-        container = client.containers.run(
-            r2d_version,
-            cmd,
-            volumes={
-                "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
-            },
-            # set memory limit same as in mybinder.org:
-            # https://github.com/jupyterhub/mybinder.org-deploy/blob/4cfbd9c7975d5d8b6cccbb02974be8aca499b228/config/prod.yaml#L33
-            mem_limit="12g",
-            # https://stackoverflow.com/questions/59690457/whats-the-difference-between-auto-remove-and-remove-in-docker-sdk-for-python
-            # use detach and auto_remove together
-            # https://github.com/docker/docker-py/blob/master/docker/models/containers.py#L788-L790
-            detach=True,  # Run container in the background and return a Container object
-            # auto_remove=True,  # enable auto-removal of the container on daemon side when the container’s process exits.
-            # remove=True,  # Remove the container when it has finished running
-        )
-
-        log_file_name = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}_{strftime("%Y_%m_%d_%H_%M_%S")}.log'
+        _, ts_safe = get_utc_ts()
+        log_file_name = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}_{ts_safe}.log'
         with open(os.path.join(build_log_folder, log_file_name), 'w') as log_file:
-            for log in container.logs(follow=True, stream=True):
-                if isinstance(log, bytes):
-                    log = log.decode("utf8", "replace")
-                log_file.write(log)
-
-        # if log_dict["phase"] == "failure":
-        #     # "failure"s are from docker build
-        #     # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
-        #     build_success = 0
-        # elif log_dict["phase"] == "failed":
-        #     # ?"failed"s are from python docker client?
-        #     # Ex: Error during build: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out.  .... "phase": "failed"}
-        #     build_success = 2
-        # elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
-        #     # {'message': 'Successfully tagged bp20-binder-2dexamples-2drequirements-55ab5c:11cdea057c300242a30e5c265d8dc79f60f644e1\n', 'phase': 'building'}
-        #     build_success = 1
-        # else:
-        #     # unknown - look at the log file
-        #     build_success = 3
-
-        status = container.wait()
-        logger.info(f"{repo_id} : {image_name} : {status}")
-        # Remove this container. Similar to the docker rm command.
-        container.remove(force=True)
-        result["build_success"] = 1 if status["StatusCode"] == 0 else 0
+            try:
+                # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
+                container = client.containers.run(
+                    r2d_version,
+                    cmd,
+                    name=f"{r2d_version}:{repo_id}",
+                    volumes={
+                        "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
+                    },
+                    # set memory limit same as in mybinder.org:
+                    # https://github.com/jupyterhub/mybinder.org-deploy/blob/4cfbd9c7975d5d8b6cccbb02974be8aca499b228/config/prod.yaml#L33
+                    mem_limit="12g",
+                    # https://stackoverflow.com/questions/59690457/whats-the-difference-between-auto-remove-and-remove-in-docker-sdk-for-python
+                    # use detach and auto_remove together
+                    # https://github.com/docker/docker-py/blob/master/docker/models/containers.py#L788-L790
+                    detach=True,  # Run container in the background and return a Container object
+                    # auto_remove=True,  # enable auto-removal of the container on daemon side when the container’s process exits.
+                    # remove=True,  # Remove the container when it has finished running
+                )
+            except docker.errors.ContainerError as e:
+                # e.g. memory error
+                text = e.stderr
+                if isinstance(text, bytes):
+                    text = text.decode("utf8", "replace")
+                log_file.write(text)
+                logger.exception(f"{repo_id}:{repo_url}:build_image")
+                e.container.remove()
+                # raise
+                result["build_success"] = 0
+            else:
+                for log in container.logs(follow=True, stream=True):
+                    if isinstance(log, bytes):
+                        log = log.decode("utf8", "replace")
+                    log_file.write(log)
+                # if log_dict["phase"] == "failure":
+                #     # "failure"s are from docker build
+                #     # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
+                #     build_success = 0
+                # elif log_dict["phase"] == "failed":
+                #     # ?"failed"s are from python docker client?
+                #     # Ex: Error during build: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out.  .... "phase": "failed"}
+                #     build_success = 2
+                # elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
+                #     # {'message': 'Successfully tagged bp20-binder-2dexamples-2drequirements-55ab5c:11cdea057c300242a30e5c265d8dc79f60f644e1\n', 'phase': 'building'}
+                #     build_success = 1
+                # else:
+                #     # unknown - look at the log file
+                #     build_success = 3
+                status = container.wait()
+                logger.info(f"{repo_id} : {image_name} : {status}")
+                # Remove this container. Similar to the docker rm command.
+                container.remove(force=True)
+                result["build_success"] = 1 if status["StatusCode"] == 0 else 0
         result["build_timestamp"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
         return result
 
@@ -189,7 +272,7 @@ def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
     r = build_image(repo_id, repo_url, image_name, resolved_ref)
     e.update(r)
     if e["build_success"] == 1:
-        execution_entries = run_image(repo_id, image_name)
+        execution_entries = run_image(repo_id, repo_url, image_name)
         if execution_entries:
             for e_e in execution_entries:
                 e_e.update(e)
@@ -230,6 +313,7 @@ def build_and_run_images(df_repos):
                             if e["build_success"] == 1 and e["image_name"] not in built_images:
                                 built_images.append(e["image_name"])
                         jobs_done += 1
+                        logger.info(f"{jobs_done} repos are processed")
                     except Exception as exc:
                         logger.exception(f"{id_repo_url}")
                     del jobs[job]
@@ -269,7 +353,18 @@ def build_and_run_all_images(query, image_limit):
     db = Database(db_name)
     df_repos = pd.read_sql_query(query, db.conn, chunksize=image_limit)
 
-    # use execution table because we filter some repos (notebooks) out
+    if notebook_table not in db.table_names():
+        db[notebook_table].create(
+            {
+                "script_timestamp": str,
+                "repo_id": int,
+                "nb_rel_path": str,
+                "r2d_version": str,
+            },
+            foreign_keys=[
+                ("repo_id", repo_table, "id")
+            ],
+        )
     if execution_table not in db.table_names():
         db[execution_table].create(
             {
@@ -306,7 +401,7 @@ def build_and_run_all_images(query, image_limit):
         c += 1
 
 
-def generate_repos_query(forks=False, buildpacks=None, launches_range=None, notebooks_range=None, repo_limit=0):
+def generate_repos_query(forks=False, buildpacks=None, launches_range=None, repo_limit=0):
     # if fork is 404, it means repo doesnt exists anymore
     # 451 -> "Repository access blocked"
     # where = f'fork IS NOT null AND fork NOT IN (404, 451) '
@@ -325,11 +420,6 @@ def generate_repos_query(forks=False, buildpacks=None, launches_range=None, note
             where += f'AND launch_count>={launches_range[0]} '
         if launches_range[1] != "":
             where += f'AND launch_count<{launches_range[1]} '
-    if notebooks_range is not None and type(notebooks_range) == tuple:
-        if notebooks_range[0] != "":
-            where += f'AND nbs_count>={notebooks_range[0]} '
-        if notebooks_range[1] != "":
-            where += f'AND nbs_count<{notebooks_range[1]} '
     query = f"SELECT * FROM {repo_table} WHERE {where} ORDER BY first_launch_ts "
     if repo_limit > 0:
         query += f"LIMIT {repo_limit};"
@@ -363,7 +453,7 @@ def get_args():
                                                  f'By default it excludes repos that do no exist anymore and '
                                                  f'also repos with invalid spec (the spec of last launch). '
                                                  f'To exclude more repos check --forks, --buildpacks '
-                                                 f', --repo_limit, --launches_range and --notebooks_range flags. ',
+                                                 f', --repo_limit, --launches_range flags. ',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-n', '--db_name', required=True)
     parser.add_argument('-r2d', '--r2d_version', required=False, default=get_repo2docker_image(),
@@ -376,9 +466,9 @@ def get_args():
                              'For example "10," is to have repos which are launches >= 10 times.\n'
                              'Default is to build images of all repos.')
     parser.add_argument('-nr', '--notebooks_range', type=str, default='',
-                        help='Range for number of notebooks that a repo must have to be built.\n'
-                             'For example "0,50" is to have repos which contain 0 <= launches < 50 notebooks.\n'
-                             'Default is to build images of all repos.')
+                        help='Range for number of notebooks that a repo must have to execute notebooks.\n'
+                             'For example "0,50" is to have repos which contain 0 <= notebooks < 50 notebooks.\n'
+                             'Default is to execute all notebooks that the repo has.')
     parser.add_argument('-f', '--forks', required=False, default=False, action='store_true',
                         help='Build images of forked repos too. Default is False.')
     parser.add_argument('-bp', '--buildpacks', required=False, default="",
@@ -414,6 +504,7 @@ def main():
     global r2d_version
     global max_workers
     global script_ts
+    global notebooks_range
 
     args = get_args()
     db_name = args.db_name
@@ -423,21 +514,20 @@ def main():
     forks = args.forks
     buildpacks = ['"'+bp.strip()+'"' for bp in args.buildpacks.split(",") if bp]
     repo_limit = args.repo_limit
-    query = args.query or generate_repos_query(forks, buildpacks, launches_range, notebooks_range, repo_limit)
+    query = args.query or generate_repos_query(forks, buildpacks, launches_range, repo_limit)
     image_limit = args.image_limit
     push = args.push
     image_prefix = args.image_prefix
     max_workers = args.max_workers
     verbose = args.verbose
 
-    script_ts = datetime.utcnow().replace(microsecond=0).isoformat()
-    script_ts_safe = script_ts.replace(":", "-")
+    script_ts, script_ts_safe = get_utc_ts()
     logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'
     logger = get_logger(logger_name)
     build_log_folder = f"build_images/build_images_logs_{script_ts_safe}"
-    pathlib.Path(build_log_folder).mkdir(parents=True, exist_ok=True)
+    os.makedirs(build_log_folder, exist_ok=True)
     run_output_folder = f"run_images/run_images_logs_{script_ts_safe}"
-    pathlib.Path(run_output_folder).mkdir(parents=True, exist_ok=True)
+    os.makedirs(run_output_folder, exist_ok=True)
 
     if verbose:
         print(f"Logs are in {logger_name}.log")
