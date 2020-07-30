@@ -380,6 +380,8 @@ def build_and_run_all_images(query, image_limit):
         logger.info(f"Removing images")
         remove_images(built_images)
         c += 1
+    # optimize the database
+    db.vacuum()
 
 
 def generate_repos_query(forks=False, buildpacks=None, launches_range=None, repo_limit=0):
