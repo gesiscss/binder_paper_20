@@ -3,6 +3,7 @@ Parser for mybinder.org events archive (https://archive.analytics.mybinder.org/)
 """
 import argparse
 import pandas as pd
+import os
 from datetime import datetime, timedelta
 from sqlite_utils import Database
 from concurrent.futures.process import ProcessPoolExecutor
@@ -134,9 +135,6 @@ def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose
         raise Exception(f"table {launch_table} already exists in {db_name}")
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        logger_name = db_name[:-3]
-        logger_name = "parse_mybinder_archive" + "_at_" + logger_name.split("_at_")[-1]
-        logger = get_logger(logger_name)
         jobs = {}
         while current_date <= end_date or jobs:
             # continue creating new jobs until reaching to last date
@@ -215,6 +213,8 @@ def get_args():
 
 
 def main():
+    global logger
+
     args = get_args()
     start_date = args.start_date
     end_date = args.end_date
@@ -229,6 +229,11 @@ def main():
     db_name = f'{db_name}_at_{script_ts_safe}.db'.replace("-", "_")
     max_workers = args.max_workers
     verbose = args.verbose
+
+    logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'.replace("-", "_")
+    logger = get_logger(logger_name)
+    if verbose:
+        print(f"Logs are in {logger_name}.log")
 
     parse_mybinder_archive(start_date, end_date, db_name, max_workers, verbose)
     print(f"""\n
