@@ -1,0 +1,7 @@
+name: bp20-scripts
+channels:
+  - defaults
+dependencies:
+  - python=3.7
+  - pip:
+    - -r file:requirements.txt
