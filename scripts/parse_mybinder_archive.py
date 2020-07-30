@@ -59,7 +59,7 @@ def _handle_exceptions_in_archve(df, a_name):
     # here we only fix the ones which causes exceptions in our script, for example in get_ref() function
     elif a_name == "events-2018-11-25.jsonl":
         # df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "provider"] = "Gist"
-        df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "spec"] = "jakevdp/256c3ad937af9ec7d4c65a29e5b6d454"
+        df.loc[df['spec'] == "https%3A%2F%2Fgist.github.com%2Fjakevdp/256c3ad937af9ec7d4c65a29e5b6d454", "spec"] = "jakevdp/256c3ad937af9ec7d4c65a29e5b6d454/master"
     # elif a_name == "events-2018-12-16.jsonl":
     #     df.loc[df['spec'] == "agailloty/5989b393c1b54ad62412c2dc027903a3/master", "provider"] = "Gist"
     elif a_name == "events-2019-01-28.jsonl":
