@@ -25,7 +25,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
         try:
             container = client.containers.run(
                 image=image_name,
-                name=f"{repo_id}-detect-notebooks",
+                name=f"{repo_id}-detect-notebooks-{script_ts_safe}",
                 volumes={
                     current_dir: {"bind": "/src", "mode": "ro"},
                     repo_output_folder: {"bind": "/io", "mode": "rw"},
@@ -44,8 +44,9 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
             if isinstance(text, bytes):
                 text = text.decode("utf8", "replace")
             log_file.write(text)
-            logger.exception(f"{repo_id}:{image_name}:detect_notebooks")
-            e.container.remove()
+            e.container.remove(force=True)
+            # raise error, because this repo shouldnt be saved in execution table with 0 notebooks
+            raise e
         else:
             for log in container.logs(follow=True, stream=True):
                 if isinstance(log, bytes):
@@ -77,31 +78,28 @@ def run_image(repo_id, repo_url, image_name):
     notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir)
     execution_entries = []
     if not notebooks:
-        logger.info(f"{repo_id}:{repo_url} has no notebook")
+        logger.info(f"{repo_id} : {repo_url} has no notebook")
         return execution_entries
 
     if notebooks_range is not None and type(notebooks_range) == tuple:
         f = 0 if notebooks_range[0] == "" else notebooks_range[0]
         t = len(notebooks)+1 if notebooks_range[1] == "" else notebooks_range[1]
         if not (f <= len(notebooks) < t):
+            logger.info(f"{repo_id} : {repo_url} skipping notebooks execution, "
+                        f"limit is {notebooks_range} but it has {len(notebooks)} notebook")
             for nb_rel_path in notebooks:
                 execution_entries.append({"nb_rel_path": nb_rel_path})
-            logger.info(f"{repo_id}:{repo_url} skipping notebooks execution, "
-                        f"limit is {notebooks_range} but it has {len(notebooks)} notebook")
             return execution_entries
 
-    logger.info(f"{repo_id}:{repo_url} executing {len(notebooks)} notebooks")
+    logger.info(f"{repo_id} : {repo_url} executing {len(notebooks)} notebooks")
     # execute each notebook
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     nb_count = 0
     for nb_rel_path in notebooks:
         nb_count += 1
         _, ts_safe = get_utc_ts()
-        nb_log_file = os.path.join(repo_output_folder,
-                                   f'{nb_rel_path.replace("/", "-")}_{ts_safe}.log')
+        nb_log_file = os.path.join(repo_output_folder, f'{nb_rel_path.replace("/", "-")}_{ts_safe}.log')
         execution_entry = {
-            # "kind": "notebook",
-            # "test_id": argument,
             "nb_rel_path": nb_rel_path,
             "nb_log_file": nb_log_file,
         }
@@ -110,7 +108,7 @@ def run_image(repo_id, repo_url, image_name):
                 kind = "notebook"
                 container = client.containers.run(
                     image=image_name,
-                    name=f"{repo_id}-execute-nb-{nb_count}",
+                    name=f"{repo_id}-execute-nb-{nb_count}-{script_ts_safe}",
                     volumes={
                         current_dir: {"bind": "/src", "mode": "ro"},
                         repo_output_folder: {"bind": "/io", "mode": "rw"},
@@ -134,13 +132,11 @@ def run_image(repo_id, repo_url, image_name):
                     # remove=True,  # Remove the container when it has finished running
                 )
             except docker.errors.ContainerError as e:
-                # e.g. memory error
                 text = e.stderr
                 if isinstance(text, bytes):
                     text = text.decode("utf8", "replace")
                 log_file.write(text)
-                e.container.remove()
-                # raise
+                e.container.remove(force=True)
                 execution_entry["nb_success"] = 0
             else:
                 for log in container.logs(follow=True, stream=True):
@@ -163,29 +159,29 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     image = None
     try:
         image = client.images.get(image_name)
-        logger.info(f"Image {image_name} found locally")
+        logger.info(f"{repo_id} : Image {image_name} found locally")
     except docker.errors.ImageNotFound:
         try:
             repository, tag = image_name.rsplit(":", 1)
             image = client.images.pull(repository, tag)
-            logger.info(f"Image {image_name} found in registry")
+            logger.info(f"{repo_id} : Image {image_name} found in registry")
         except docker.errors.NotFound:
             # will build
             pass
     else:
-        logger.info(f"Pushing it to registry")
-        # if found locally, push to registry
-        repository, tag = image_name.rsplit(":", 1)
-        client.images.push(repository, tag)
+        if push:
+            # if found locally, push to registry
+            logger.info(f"Pushing it to registry")
+            repository, tag = image_name.rsplit(":", 1)
+            client.images.push(repository, tag)
 
     if image:
         # image exists locally or in the registry
-        # logger.info(f"Image {image_name} is already built")
         result["build_success"] = 1
         result["build_timestamp"] = image.attrs["Created"].split(".")[0]
         return result
     else:
-        logger.info(f"Building {image_name}")
+        logger.info(f"{repo_id} : Building {image_name}")
         cmd = [
             "jupyter-repo2docker", "--ref", resolved_ref,
             "--image-name", image_name,
@@ -208,7 +204,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                 container = client.containers.run(
                     image=r2d_version,
                     command=cmd,
-                    name=f"{repo_id}-image-build",
+                    name=f"{repo_id}-image-build-{script_ts_safe}",
                     volumes={
                         "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"}
                     },
@@ -223,14 +219,12 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                     # remove=True,  # Remove the container when it has finished running
                 )
             except docker.errors.ContainerError as e:
-                # e.g. memory error
                 text = e.stderr
                 if isinstance(text, bytes):
                     text = text.decode("utf8", "replace")
                 log_file.write(text)
-                logger.exception(f"{repo_id}:{repo_url}:build_image")
-                e.container.remove()
-                # raise
+                logger.exception(f"{repo_id} : {repo_url} : build_image")
+                e.container.remove(force=True)
                 result["build_success"] = 0
             else:
                 for log in container.logs(follow=True, stream=True):
@@ -290,6 +284,7 @@ def build_and_run_images(df_repos):
         index, row = next(rows)
         while True:
             if row is not None:
+                # dataframe still has repo to process
                 image_name = get_image_name(row["provider"], row["last_spec"], image_prefix, row["resolved_ref"])
                 # TODO before each job, check available disk size for docker and warn
                 job = executor.submit(build_and_run_image, row["id"], row["repo_url"], image_name, row["resolved_ref"])
@@ -297,7 +292,8 @@ def build_and_run_images(df_repos):
 
             if (jobs and len(jobs) == max_workers) or row is None:
                 # limit number of jobs with max_workers
-                # row is None means there is no new job
+                # "row is None" means that there is no repo left in dataframe
+                # but we are still here iterating because there are still running jobs
                 for job in as_completed(jobs):
                     id_repo_url = jobs[job]
                     try:
@@ -314,7 +310,7 @@ def build_and_run_images(df_repos):
                     # break to add a new job, if there is any
                     break
             try:
-                # get next row
+                # get next repo
                 index, row = next(rows)
             except StopIteration:
                 # chunk is finished
@@ -434,23 +430,23 @@ def get_args():
                                                  f'{repo_table} table and executes each notebook of built repos '
                                                  f'and then saves results in {execution_table} table. '
                                                  f'By default it excludes repos that do no exist anymore and '
-                                                 f'also repos with invalid spec (the spec of last launch). '
+                                                 f'also repos with invalid spec (the spec of the last launch). '
                                                  f'To exclude more repos check --forks, --buildpacks '
                                                  f', --repo_limit, --launches_range flags. ',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-n', '--db_name', required=True)
     parser.add_argument('-r2d', '--r2d_version', required=False, default=get_repo2docker_image(),
-                        help='Full image name of the repo2docker to be used for image building, '
+                        help='repo2docker version to be used for image building, '
                              'such as "jupyter/repo2docker:0.11.0-102.g163718b" '
                              '(https://hub.docker.com/r/jupyter/repo2docker).\n'
                              'Default is what is currently used in mybinder.org')
     parser.add_argument('-lr', '--launches_range', type=str, default='',
                         help='Range for number of launches that a repo must have to be built.\n'
-                             'For example "10," is to have repos which are launches >= 10 times.\n'
+                             'For example "10," is to have repos which have launches >= 10 times.\n'
                              'Default is to build images of all repos.')
     parser.add_argument('-nr', '--notebooks_range', type=str, default='',
                         help='Range for number of notebooks that a repo must have to execute notebooks.\n'
-                             'For example "0,50" is to have repos which contain 0 <= notebooks < 50 notebooks.\n'
+                             'For example "0,50" is to have repos which contain 0 <= # notebooks < 50.\n'
                              'Default is to execute all notebooks that the repo has.')
     parser.add_argument('-f', '--forks', required=False, default=False, action='store_true',
                         help='Build images of forked repos too. Default is False.')
@@ -458,7 +454,7 @@ def get_args():
                         help='Comma-separated list of buildpacks to be processed. '
                              'Default is to process all.')
     parser.add_argument('-rl', '--repo_limit', type=int, default=0,
-                        help='Max number of repos to build images.\n'
+                        help='Use this if you want to limit number of repos to process.\n'
                              'Default is 0, which means build images of all repos.')
     parser.add_argument('-q', '--query', required=False,
                         help='Custom query to select repos from database. This overrides all other query args.')
@@ -487,6 +483,7 @@ def main():
     global r2d_version
     global max_workers
     global script_ts
+    global script_ts_safe
     global notebooks_range
 
     args = get_args()
