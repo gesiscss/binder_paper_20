@@ -382,6 +382,7 @@ def build_and_run_all_images(query, image_limit):
         remove_images(built_images)
         c += 1
     # optimize the database
+    logger.info("Vacuum")
     db.vacuum()
 
 
