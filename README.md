@@ -75,6 +75,7 @@ image_name | docker image name
 r2d_version | 
 build_timestamp | 
 build_success | 1 or 0
+notebooks_success | 1 or 0, if notebooks detection is successful or not
 nb_rel_path | notebook's relative path in repo
 nb_success | 1 or 0, if notebook execution successful or not
 nb_log_file | logs from notebook execution, e.g. kernel info can be found there

@@ -45,8 +45,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
                 text = text.decode("utf8", "replace")
             log_file.write(text)
             e.container.remove(force=True)
-            # raise error, because this repo shouldnt be saved in execution table with 0 notebooks
-            raise e
+            notebooks_success = 0
         else:
             for log in container.logs(follow=True, stream=True):
                 if isinstance(log, bytes):
@@ -56,13 +55,14 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
             message = f"\nContainer exited with status: {status}\n"
             log_file.write(message)
             container.remove(force=True)
-
-            notebooks_file = os.path.join(repo_output_folder, 'notebooks.txt')
-            with open(notebooks_file, 'r') as f:
-                for line in f:
-                    nb_rel_path = line.rstrip()
-                    notebooks.append(nb_rel_path)
-    return notebooks
+            notebooks_success = 1 if status["StatusCode"] == 0 else 0
+            if notebooks_success:
+                notebooks_file = os.path.join(repo_output_folder, 'notebooks.txt')
+                with open(notebooks_file, 'r') as f:
+                    for line in f:
+                        nb_rel_path = line.rstrip()
+                        notebooks.append(nb_rel_path)
+    return notebooks_success, notebooks
 
 
 def run_image(repo_id, repo_url, image_name):
@@ -75,11 +75,14 @@ def run_image(repo_id, repo_url, image_name):
     os.makedirs(repo_output_folder, exist_ok=True)
     current_dir = os.path.dirname(os.path.realpath(__file__))
 
-    notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir)
+    notebooks_success, notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir)
     execution_entries = []
     if not notebooks:
-        logger.info(f"{repo_id} : {repo_url} has no notebook")
-        return execution_entries
+        if notebooks_success:
+            logger.info(f"{repo_id} : {repo_url} has no notebook")
+        else:
+            logger.info(f"{repo_id} : {repo_url} failed to detect notebook")
+        return notebooks_success, execution_entries
 
     if notebooks_range is not None and type(notebooks_range) == tuple:
         f = 0 if notebooks_range[0] == "" else notebooks_range[0]
@@ -89,7 +92,7 @@ def run_image(repo_id, repo_url, image_name):
                         f"limit is {notebooks_range} but it has {len(notebooks)} notebook")
             for nb_rel_path in notebooks:
                 execution_entries.append({"nb_rel_path": nb_rel_path})
-            return execution_entries
+            return notebooks_success, execution_entries
 
     logger.info(f"{repo_id} : {repo_url} executing {len(notebooks)} notebooks")
     # execute each notebook
@@ -150,7 +153,7 @@ def run_image(repo_id, repo_url, image_name):
                 execution_entry["nb_success"] = 1 if status["StatusCode"] == 0 else 0
             finally:
                 execution_entries.append(execution_entry)
-    return execution_entries
+    return notebooks_success, execution_entries
 
 
 def build_image(repo_id, repo_url, image_name, resolved_ref):
@@ -260,7 +263,8 @@ def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
     r = build_image(repo_id, repo_url, image_name, resolved_ref)
     e.update(r)
     if e["build_success"] == 1:
-        execution_entries = run_image(repo_id, repo_url, image_name)
+        notebooks_success, execution_entries = run_image(repo_id, repo_url, image_name)
+        e["notebooks_success"] = notebooks_success
         if execution_entries:
             for e_e in execution_entries:
                 e_e.update(e)
@@ -352,6 +356,7 @@ def build_and_run_all_images(query, image_limit):
                 "r2d_version": str,
                 "build_timestamp": str,
                 "build_success": int,
+                "notebooks_success": int,
                 "nb_rel_path": str,
                 # kernel_name can be parsed from execution log file of each notebook (nb_log_file)
                 # "kernel_name": str,
