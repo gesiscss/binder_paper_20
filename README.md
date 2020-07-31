@@ -84,4 +84,4 @@ Note: docker version is 19.03.5 (https://github.com/jupyterhub/binderhub/blob/d8
 
 ### Analysis
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/gesiscss/binder_paper_20/master?filepath=analysis%2Frepos.ipynb)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/gesiscss/binder_paper_20/master?filepath=analysis)
