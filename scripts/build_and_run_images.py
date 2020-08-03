@@ -21,6 +21,9 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
     notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}.log')
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     notebooks = []
+    # shell command to find all notebooks
+    # excludes checkpoints
+    command = ["/bin/sh", "-c", "find . -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' > /io/notebooks.txt"]
     with open(notebooks_log_file, 'w') as log_file:
         try:
             container = client.containers.run(
@@ -30,13 +33,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
                     current_dir: {"bind": "/src", "mode": "ro"},
                     repo_output_folder: {"bind": "/io", "mode": "rw"},
                 },
-                command=[
-                    "python3",
-                    "-u",
-                    "/src/inrepo_detect_notebooks.py",
-                    "--output-dir",
-                    "/io"
-                ],
+                command=command,
                 detach=True
             )
         except docker.errors.ContainerError as e:
@@ -81,7 +78,7 @@ def run_image(repo_id, repo_url, image_name):
         if notebooks_success:
             logger.info(f"{repo_id} : {repo_url} has no notebook")
         else:
-            logger.info(f"{repo_id} : {repo_url} failed to detect notebook")
+            logger.info(f"{repo_id} : {repo_url} failed to detect notebooks")
         return notebooks_success, execution_entries
 
     if notebooks_range is not None and type(notebooks_range) == tuple:
