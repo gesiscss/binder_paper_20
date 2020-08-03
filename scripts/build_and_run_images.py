@@ -23,7 +23,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
     notebooks = []
     # shell command to find all notebooks
     # excludes checkpoints
-    command = ["/bin/sh", "-c", "find . -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' > /io/notebooks.txt"]
+    command = ["/bin/sh", "-c", "find . -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' -print > /io/notebooks.txt"]
     with open(notebooks_log_file, 'w') as log_file:
         try:
             container = client.containers.run(
