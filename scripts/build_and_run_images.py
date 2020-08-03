@@ -58,7 +58,9 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
                 with open(notebooks_file, 'r') as f:
                     for line in f:
                         nb_rel_path = line.rstrip()
-                        notebooks.append(nb_rel_path)
+                        if nb_rel_path:
+                            # skip empty last line
+                            notebooks.append(nb_rel_path)
     return notebooks_success, notebooks
 
 
