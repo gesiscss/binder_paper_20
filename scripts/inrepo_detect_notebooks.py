@@ -28,7 +28,7 @@ def detect_notebooks(output_dir):
                 notebooks.append(rel_file_path)
 
     dest_path = os.path.join(output_dir, "notebooks.txt")
-    log.info(f"Saving paths of {len(notebooks)} notebooks to {dest_path}")
+    log.info("Saving paths of " + str(len(notebooks)) + " notebooks to " + str(dest_path))
     with open(dest_path, "w") as f:
         for nb_rel_path in notebooks:
             f.write(nb_rel_path+"\n")

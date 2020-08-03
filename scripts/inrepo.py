@@ -21,7 +21,7 @@ def import_test(modname):
 
     Just check if it imports!
     """
-    log.info(f"Testing import of {modname}")
+    log.info("Testing import of " + str(modname))
     importlib.import_module(modname)
 
 
@@ -35,7 +35,7 @@ def run_notebook(nb_path, output_dir):
     from jupyter_client.kernelspec import KernelSpecManager
     from nbconvert.preprocessors.execute import executenb
 
-    log.info(f"Testing notebook {nb_path}")
+    log.info("Testing notebook " + str(nb_path))
     with open(nb_path) as f:
         nb = nbformat.read(f, as_version=4)
 
@@ -44,10 +44,10 @@ def run_notebook(nb_path, output_dir):
     kernel_name = kernel_info.get("name", "")
     kernel_language = kernel_info.get("language") or ""
     if kernel_name in kernel_specs:
-        log.info(f"Found kernel {kernel_name}")
+        log.info("Found kernel " + str(kernel_name))
     elif kernel_language:
         log.warning(
-            f"No such kernel {kernel_name}, falling back on kernel language={kernel_language}"
+            "No such kernel " + str(kernel_name) + ", falling back on kernel language=" + str(kernel_language)
         )
         kernel_language = kernel_language.lower()
         # no exact name match, re-implement js notebook fallback,
@@ -59,26 +59,26 @@ def run_notebook(nb_path, output_dir):
                 == kernel_language
             ):
                 log.warning(
-                    f"Using kernel {kernel_spec_name} to provide language: {kernel_language}"
+                    "Using kernel " + str(kernel_spec_name) + " to provide language: " + str(kernel_language)
                 )
                 kernel_name = kernel_spec_name
                 break
         else:
             log.warning(
-                "Found no matching kernel for name={kernel_name}, language={kernel_language}"
+                "Found no matching kernel for name=" + str(kernel_name) + ", language=" + str(kernel_language)
             )
             summary_specs = [
-                f"name={name}, language={info['spec'].get('language')}"
+                "name=" + str(name) + ", language=" + str(info['spec'].get('language'))
                 for name, info in kernel_specs.items()
             ]
-            log.warning(f"Found kernel specs: {'; '.join(summary_specs)}")
+            log.warning("Found kernel specs: " + '; '.join(summary_specs))
 
     exported = executenb(
         nb, cwd=os.path.dirname(nb_path), kernel_name=kernel_name, timeout=600
     )
     rel_path = os.path.relpath(nb_path, os.getcwd())
     dest_path = os.path.join(output_dir, "notebooks", rel_path)
-    log.info(f"Saving exported notebook to {dest_path}")
+    log.info("Saving exported notebook to " + str(dest_path))
     try:
         os.makedirs(os.path.dirname(dest_path))
     except FileExistsError:
