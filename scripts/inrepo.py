@@ -34,6 +34,7 @@ def run_notebook(nb_path, output_dir):
     import nbformat
     from jupyter_client.kernelspec import KernelSpecManager
     from nbconvert.preprocessors.execute import executenb
+    from datetime import datetime
 
     log.info("Testing notebook " + str(nb_path))
     with open(nb_path) as f:
@@ -73,9 +74,12 @@ def run_notebook(nb_path, output_dir):
             ]
             log.warning("Found kernel specs: " + '; '.join(summary_specs))
 
+    start_time = datetime.now()
     exported = executenb(
         nb, cwd=os.path.dirname(nb_path), kernel_name=kernel_name, timeout=600
     )
+    execution_time = (datetime.now() - start_time).seconds
+    log.info("Execution time is " + str(execution_time))
     rel_path = os.path.relpath(nb_path, os.getcwd())
     dest_path = os.path.join(output_dir, "notebooks", rel_path)
     log.info("Saving exported notebook to " + str(dest_path))
