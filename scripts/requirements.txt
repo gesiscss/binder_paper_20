@@ -6,4 +6,4 @@ sqlite-utils==2.11.*
 PyGithub==1.51
 # NOTE: get bhub and r2d versions from https://mybinder.org/versions
 git+git://github.com/jupyterhub/binderhub@b81d913#egg=binderhub
-git+git://github.com/jupyter/repo2docker@163718b#egg=repo2docker
+git+git://github.com/jupyter/repo2docker@47c456c#egg=repo2docker
