@@ -14,7 +14,9 @@ from sqlite_utils import Database
 
 # time out for python docker client
 DOCKER_TIMEOUT = 300
-# BUILD_TIMEOUT = 3*60*60
+# https://github.com/jupyterhub/binderhub/blob/b81d913f66236cab840c437975683fbcac1e6e62/binderhub/app.py#L435-L443
+# we dont guarantee 2 cpus for image building, so use higher timeout
+BUILD_TIMEOUT = 3600 * 6
 
 
 def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
@@ -233,29 +235,47 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                 e.container.remove(force=True)
                 result["build_success"] = 0
             else:
+                timed_out = False
+                # ex created: '2020-08-04T13:55:56.323133607Z'
+                created = datetime.fromisoformat(
+                    container.attrs["Created"].rsplit(".", 1)[0]
+                )
                 for log in container.logs(follow=True, stream=True):
                     if isinstance(log, bytes):
                         log = log.decode("utf8", "replace")
                     log_file.write(log)
-                # if log_dict["phase"] == "failure":
-                #     # "failure"s are from docker build
-                #     # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
-                #     build_success = 0
-                # elif log_dict["phase"] == "failed":
-                #     # ?"failed"s are from python docker client?
-                #     # Ex: Error during build: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out.  .... "phase": "failed"}
-                #     build_success = 2
-                # elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
-                #     # {'message': 'Successfully tagged bp20-binder-2dexamples-2drequirements-55ab5c:11cdea057c300242a30e5c265d8dc79f60f644e1\n', 'phase': 'building'}
-                #     build_success = 1
-                # else:
-                #     # unknown - look at the log file
-                #     build_success = 3
-                status = container.wait()
-                result["build_success"] = 1 if status["StatusCode"] == 0 else 0
-                if result["build_success"]:
-                    result["build_time"] = (datetime.now() - start_time).seconds
-                logger.info(f"{repo_id} : {image_name} : {status}")
+                    # check age of build container
+                    age = (datetime.utcnow() - created).seconds
+                    if age > BUILD_TIMEOUT:
+                        # if already pushing, let it finish
+                        if "Pushing image" not in log:
+                            timed_out = True
+                            log_file.write(f"Timed out ({age} > {BUILD_TIMEOUT})\n")
+                            break
+                if timed_out:
+                    result["build_success"] = 0
+                    result["build_time"] = -1
+                    logger.info(f"{repo_id} : {image_name} : Build Timed out ({age} > {BUILD_TIMEOUT})")
+                else:
+                    # if log_dict["phase"] == "failure":
+                    #     # "failure"s are from docker build
+                    #     # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
+                    #     build_success = 0
+                    # elif log_dict["phase"] == "failed":
+                    #     # ?"failed"s are from python docker client?
+                    #     # Ex: Error during build: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out.  .... "phase": "failed"}
+                    #     build_success = 2
+                    # elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
+                    #     # {'message': 'Successfully tagged bp20-binder-2dexamples-2drequirements-55ab5c:11cdea057c300242a30e5c265d8dc79f60f644e1\n', 'phase': 'building'}
+                    #     build_success = 1
+                    # else:
+                    #     # unknown - look at the log file
+                    #     build_success = 3
+                    status = container.wait()
+                    result["build_success"] = 1 if status["StatusCode"] == 0 else 0
+                    if result["build_success"]:
+                        result["build_time"] = (datetime.now() - start_time).seconds
+                    logger.info(f"{repo_id} : {image_name} : {status}")
                 # Remove this container. Similar to the docker rm command.
                 container.remove(force=True)
         result["build_timestamp"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
