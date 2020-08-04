@@ -122,8 +122,10 @@ def parse_archive(archive_date, db_name):
 
 def parse_mybinder_archive(start_date, end_date, db_name, max_workers=1, verbose=False):
     start_time = datetime.now()
+    msg = f"parsing started at {start_time}"
     if verbose:
-        print(f"parsing started at {start_time}")
+        print(msg)
+    logger.info(msg)
 
     one_day = timedelta(days=1)
     current_date = start_date

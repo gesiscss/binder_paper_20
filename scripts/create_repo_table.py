@@ -90,8 +90,10 @@ def get_repo_data(repo_entry, access_token):
 
 def create_repo_table(db_name, providers, launch_limit, access_token=None, max_workers=4):
     start_time = datetime.now()
+    msg = f"creating repo table, started at {start_time}"
     if verbose:
-        print(f"creating repo table, started at {start_time}")
+        print(msg)
+    logger.info(msg)
 
     db = Database(db_name)
     if repo_table in db.table_names():
