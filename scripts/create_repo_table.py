@@ -100,8 +100,7 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
         raise Exception(f"table {repo_table} already exists in {db_name}")
     else:
         # create repo table with id column as primary key
-        db[repo_table].create(
-            {
+        columns = {
                 "id": int,
                 # there will be repos with same remote_id, because they are renamed
                 "remote_id": str,
@@ -121,7 +120,9 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
                 "launch_count": int,
                 "binder_dir": str,
                 "buildpack": str,
-            },
+            }
+        db[repo_table].create(
+            columns,
             pk="id",
         )
         repos = db[repo_table]
@@ -151,10 +152,22 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
                     ts_specs = sorted(ts_specs, key=lambda x: x[0])
                     last_spec = ts_specs[-1][1]
                     repo_entry = {
-                        "id": id_, "last_spec": last_spec,
-                        "provider": row["provider"], "repo_url": row["repo_url"],
-                        "first_launch_ts": row["first_launch_ts"], "last_launch_ts": row["last_launch_ts"],
+                        "id": id_,
+                        "remote_id": None,
+                        "provider": row["provider"],
+                        "repo_url": row["repo_url"],
+                        "first_launch_ts": row["first_launch_ts"],
+                        "last_launch_ts": row["last_launch_ts"],
+                        "last_spec": last_spec,
+                        "ref": None,
+                        "resolved_ref": None,
+                        "resolved_date": None,
+                        "resolved_ref_date": None,
+                        "fork": None,
+                        "renamed": None,
                         "launch_count": row["launch_count"],
+                        "binder_dir": None,
+                        "buildpack": None,
                         }
 
                     if access_token:
@@ -190,7 +203,7 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
                     # wait until all jobs finish
                     row = None
 
-        repos.insert_all(repos_list, pk="id")
+        repos.insert_all(repos_list, pk="id", columns=columns)
         repo_count += len(df_chunk)
         msg = f"{repo_count} ({jobs_done}) repos are processed"
         logger.info(msg)
