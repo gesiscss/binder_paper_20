@@ -14,6 +14,7 @@ from sqlite_utils import Database
 
 # time out for python docker client
 DOCKER_TIMEOUT = 300
+BUILD_TIMEOUT = 3*60*60
 
 
 def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
@@ -156,7 +157,7 @@ def run_image(repo_id, repo_url, image_name):
 
 
 def build_image(repo_id, repo_url, image_name, resolved_ref):
-    result = {"build_success": None, "build_timestamp": None}
+    result = {"build_success": None, "build_timestamp": None, "build_time": None}
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     image = None
     try:
@@ -185,6 +186,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     else:
         logger.info(f"{repo_id} : Building {image_name}")
         cmd = [
+            "timeout", "-t", str(BUILD_TIMEOUT), "-s", "SIGKILL",
             "jupyter-repo2docker", "--ref", resolved_ref,
             "--image-name", image_name,
             "--user-name", "jovyan",
@@ -202,6 +204,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         log_file_name = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}_{ts_safe}.log'
         with open(os.path.join(build_log_folder, log_file_name), 'w') as log_file:
             try:
+                start_time = datetime.now()
                 # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
                 container = client.containers.run(
                     image=r2d_version,
@@ -248,10 +251,12 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                 #     # unknown - look at the log file
                 #     build_success = 3
                 status = container.wait()
+                result["build_success"] = 1 if status["StatusCode"] == 0 else 0
+                if result["build_success"]:
+                    result["build_time"] = (datetime.now() - start_time).seconds
                 logger.info(f"{repo_id} : {image_name} : {status}")
                 # Remove this container. Similar to the docker rm command.
                 container.remove(force=True)
-                result["build_success"] = 1 if status["StatusCode"] == 0 else 0
         result["build_timestamp"] = datetime.utcnow().replace(second=0, microsecond=0).isoformat()
         return result
 
@@ -276,7 +281,7 @@ def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
     return execution_entries
 
 
-def build_and_run_images(df_repos):
+def build_and_run_images(df_repos, processed):
     execution_list = []
     built_images = []
     rows = df_repos.iterrows()
@@ -306,7 +311,7 @@ def build_and_run_images(df_repos):
                             if e["build_success"] == 1 and e["image_name"] not in built_images:
                                 built_images.append(e["image_name"])
                         jobs_done += 1
-                        logger.info(f"{jobs_done} repos are processed")
+                        logger.info(f"{processed} + {jobs_done} repos are processed")
                     except Exception as exc:
                         logger.exception(f"{id_repo_url}")
                     del jobs[job]
@@ -343,6 +348,12 @@ def remove_images(images):
 
 
 def build_and_run_all_images(query, image_limit):
+    start_time = datetime.now()
+    msg = f"Started at {start_time}"
+    if verbose:
+        print(msg)
+    logger.info(msg)
+
     db = Database(db_name)
     df_repos = pd.read_sql_query(query, db.conn, chunksize=image_limit)
 
@@ -355,11 +366,15 @@ def build_and_run_all_images(query, image_limit):
                 "r2d_version": str,
                 "build_timestamp": str,
                 "build_success": int,
+                # "build_error": str,
+                "build_time": int,
                 "notebooks_success": int,
                 "nb_rel_path": str,
                 # kernel_name can be parsed from execution log file of each notebook (nb_log_file)
                 # "kernel_name": str,
                 "nb_success": int,
+                # "nb_error": str,
+                # "nb_execution_time": int,
                 "nb_log_file": str,
             },
             # pk="image_name",
@@ -373,7 +388,8 @@ def build_and_run_all_images(query, image_limit):
     c = 1
     for df_chunk in df_repos:
         logger.info(f"Building images {c}*{image_limit}")
-        execution_list, built_images = build_and_run_images(df_chunk)
+        processed = (c-1)*image_limit
+        execution_list, built_images = build_and_run_images(df_chunk, processed)
         logger.info(f"Saving {len(execution_list)} executions")
         # db[execution_table].insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
         db[execution_table].insert_all(execution_list, batch_size=1000)
@@ -383,6 +399,13 @@ def build_and_run_all_images(query, image_limit):
     # optimize the database
     logger.info("Vacuum")
     db.vacuum()
+
+    end_time = datetime.now()
+    msg = f"duration: {end_time-start_time}"
+    if verbose:
+        print(f"finished at {end_time}")
+        print(msg)
+    logger.info(msg)
 
 
 def generate_repos_query(forks=False, buildpacks=None, launches_range=None, repo_limit=0):
@@ -467,8 +490,8 @@ def get_args():
                         help=f'Push to remote registry. Default is False.')
     parser.add_argument('-ip', '--image_prefix', required=False, default=default_image_prefix,
                         help=f'Prefix to be prepended to image name of each repo, default is "{default_image_prefix}".')
-    parser.add_argument('-il', '--image_limit', type=int, default=1000,
-                        help='Number of images to save locally before deleting them. Default is 1000.')
+    parser.add_argument('-il', '--image_limit', type=int, default=500,
+                        help='Number of images to save locally before deleting them. Default is 500.')
     parser.add_argument('-m', '--max_workers', type=int, default=4, help='Max number of processes to run in parallel. '
                                                                          'Default is 4.')
     parser.add_argument('-v', '--verbose', required=False, default=False, action='store_true',
@@ -522,6 +545,7 @@ def main():
     logger.info(f"Using {r2d_version}")
 
     build_and_run_all_images(query, image_limit)
+    logger.info(f"Done")
     print(f"""\n
     Building and running images is done.
     You could now open the database with `sqlite3 {db_name}` command and
