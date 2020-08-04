@@ -14,7 +14,7 @@ from sqlite_utils import Database
 
 # time out for python docker client
 DOCKER_TIMEOUT = 300
-BUILD_TIMEOUT = 3*60*60
+# BUILD_TIMEOUT = 3*60*60
 
 
 def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
@@ -186,7 +186,6 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     else:
         logger.info(f"{repo_id} : Building {image_name}")
         cmd = [
-            "timeout", "-t", str(BUILD_TIMEOUT), "-s", "SIGKILL",
             "jupyter-repo2docker", "--ref", resolved_ref,
             "--image-name", image_name,
             "--user-name", "jovyan",
