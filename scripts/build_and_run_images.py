@@ -590,7 +590,7 @@ def main():
     print(f"""\n
     Building and running images is done.
     You could now open the database with `sqlite3 {db_name}` command and
-    then run `select build_success, count(*) from (select build_success from {execution_table} where script_timestamp={script_ts} group by "repo_id") group by "build_success";` 
+    then run `select build_success, count(*) from (select build_success from {execution_table} where script_timestamp="{script_ts}" group by "repo_id") group by "build_success";` 
     to see how many repos are built successfully or not. Or 
     run `select nb_success, count(*) from {execution_table} where script_timestamp={script_ts} group by "nb_success";` 
     to see how many notebooks are executed successfully or not. 
