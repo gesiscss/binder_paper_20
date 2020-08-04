@@ -59,6 +59,8 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
                 with open(notebooks_file, 'r') as f:
                     for line in f:
                         nb_rel_path = line.rstrip()
+                        if nb_rel_path.startswith("./"):
+                            nb_rel_path = nb_rel_path[2:]
                         if nb_rel_path:
                             # skip empty last line
                             notebooks.append(nb_rel_path)
@@ -104,7 +106,7 @@ def run_image(repo_id, repo_url, image_name):
         nb_log_file = os.path.join(repo_output_folder, f'{nb_rel_path.replace("/", "-")}_{ts_safe}.log')
         execution_entry = {
             "nb_rel_path": nb_rel_path,
-            "nb_log_file": nb_log_file,
+            "nb_log_file": os.path.relpath(nb_log_file, current_dir),
         }
         with open(nb_log_file, 'w') as log_file:
             try:
