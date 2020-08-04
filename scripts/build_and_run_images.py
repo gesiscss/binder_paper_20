@@ -97,7 +97,7 @@ def run_image(repo_id, repo_url, image_name):
             return notebooks_success, execution_entries
 
     logger.info(f"{repo_id} : {repo_url} executing {len(notebooks)} notebooks")
-    # execute each notebook
+    # execute each notebook separately
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     nb_count = 0
     for nb_rel_path in notebooks:
@@ -159,7 +159,7 @@ def run_image(repo_id, repo_url, image_name):
 
 
 def build_image(repo_id, repo_url, image_name, resolved_ref):
-    result = {"build_success": None, "build_timestamp": None, "build_time": None}
+    result = {}
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     image = None
     try:
@@ -183,7 +183,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     if image:
         # image exists locally or in the registry
         result["build_success"] = 1
-        result["build_timestamp"] = image.attrs["Created"].split(".")[0]
+        # result["build_timestamp"] = image.attrs["Created"].split(".")[0]
         return result
     else:
         logger.info(f"{repo_id} : Building {image_name}")
@@ -263,22 +263,40 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
 
 
 def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
-    e = {"repo_id": repo_id, "image_name": image_name,
-         "r2d_version": r2d_version, "script_timestamp": script_ts}
+
+    def get_execution():
+        # return a dict with all columns
+        e = {
+            "repo_id": repo_id, "image_name": image_name,
+            "r2d_version": r2d_version, "script_timestamp": script_ts,
+            "build_success": None, "build_timestamp": None, "build_time": None,
+            "notebooks_success": None,
+            "nb_rel_path": None, "nb_log_file": None, "nb_success": None
+        }
+        return e
+
+    execution = get_execution()
     r = build_image(repo_id, repo_url, image_name, resolved_ref)
-    e.update(r)
-    if e["build_success"] == 1:
-        notebooks_success, execution_entries = run_image(repo_id, repo_url, image_name)
-        e["notebooks_success"] = notebooks_success
-        if execution_entries:
-            for e_e in execution_entries:
-                e_e.update(e)
+    execution.update(r)
+    if execution["build_success"] == 1:
+        notebooks_success, _execution_entries = run_image(repo_id, repo_url, image_name)
+        execution["notebooks_success"] = notebooks_success
+        if _execution_entries:
+            execution_entries = []
+            for e_e in _execution_entries:
+                # get a fresh dict for each entry
+                execution = get_execution()
+                # and update it with results
+                execution.update(r)
+                execution["notebooks_success"] = notebooks_success
+                execution.update(e_e)
+                execution_entries.append(execution)
         else:
             # repo has no notebook
-            execution_entries = [e]
+            execution_entries = [execution]
     else:
         # build was unsuccessful
-        execution_entries = [e]
+        execution_entries = [execution]
     return execution_entries
 
 
@@ -307,6 +325,7 @@ def build_and_run_images(df_repos, processed):
                     id_repo_url = jobs[job]
                     try:
                         execution_entries = job.result()
+                        logger.info(f"{id_repo_url}: {len(execution_entries)} executions")
                         execution_list.extend(execution_entries)
                         for e in execution_entries:
                             if e["build_success"] == 1 and e["image_name"] not in built_images:
@@ -358,9 +377,7 @@ def build_and_run_all_images(query, image_limit):
     db = Database(db_name)
     df_repos = pd.read_sql_query(query, db.conn, chunksize=image_limit)
 
-    if execution_table not in db.table_names():
-        db[execution_table].create(
-            {
+    columns = {
                 "script_timestamp": str,
                 "repo_id": int,
                 "image_name": str,
@@ -377,7 +394,10 @@ def build_and_run_all_images(query, image_limit):
                 # "nb_error": str,
                 # "nb_execution_time": int,
                 "nb_log_file": str,
-            },
+            }
+    if execution_table not in db.table_names():
+        db[execution_table].create(
+            columns,
             # pk="image_name",
             foreign_keys=[
                 ("repo_id", repo_table, "id")
@@ -393,7 +413,7 @@ def build_and_run_all_images(query, image_limit):
         execution_list, built_images = build_and_run_images(df_chunk, processed)
         logger.info(f"Saving {len(execution_list)} executions")
         # db[execution_table].insert_all(execution_list, pk="image_name", batch_size=1000, replace=True)
-        db[execution_table].insert_all(execution_list, batch_size=1000)
+        db[execution_table].insert_all(execution_list, batch_size=1000, columns=columns)
         logger.info(f"Removing images")
         remove_images(built_images)
         c += 1
