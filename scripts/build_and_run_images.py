@@ -217,7 +217,6 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         log_file_name = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}_{ts_safe}.log'
         with open(os.path.join(build_log_folder, log_file_name), 'w') as log_file:
             try:
-                start_time = datetime.now()
                 # https://docker-py.readthedocs.io/en/stable/containers.html#docker.models.containers.ContainerCollection.run
                 container = client.containers.run(
                     image=r2d_version,
@@ -284,7 +283,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                     status = container.wait()
                     result["build_success"] = 1 if status["StatusCode"] == 0 else 0
                     if result["build_success"]:
-                        result["build_time"] = (datetime.now() - start_time).seconds
+                        result["build_time"] = (datetime.utcnow() - created).seconds
                     logger.info(f"{repo_id} : {image_name} : {status}")
                 # Remove this container. Similar to the docker rm command.
                 container.remove(force=True)
