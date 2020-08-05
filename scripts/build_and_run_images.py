@@ -19,6 +19,16 @@ DOCKER_TIMEOUT = 300
 BUILD_TIMEOUT = 3600 * 6
 
 
+def create_dir(dir_path):
+    """"Create a folder with mode 0o777, so jovyan in container can write into it.
+    0o777 is the default mode that makedirs uses but sometimes it is ignored:
+    https://docs.python.org/3/library/os.html#os.makedirs
+    """
+    os.makedirs(dir_path, exist_ok=True)
+    # 0o777 means anyone can do anything
+    os.chmod(dir_path, 0o777)
+
+
 def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
     _, ts_safe = get_utc_ts()
     notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}.log')
@@ -76,7 +86,7 @@ def run_image(repo_id, repo_url, image_name):
     output_folder = os.path.abspath(run_output_folder)
     repo_folder = f'{repo_id}_{image_name.replace("/", "-").replace(":", "-")}'
     repo_output_folder = os.path.join(output_folder, repo_folder)
-    os.makedirs(repo_output_folder, exist_ok=True)
+    create_dir(repo_output_folder)
     current_dir = os.path.dirname(os.path.realpath(__file__))
 
     notebooks_success, notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir)
@@ -574,9 +584,9 @@ def main():
     logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'
     logger = get_logger(logger_name)
     build_log_folder = f"build_images/build_images_logs_{script_ts_safe}"
-    os.makedirs(build_log_folder, exist_ok=True)
+    create_dir(build_log_folder)
     run_output_folder = f"run_images/run_images_logs_{script_ts_safe}"
-    os.makedirs(run_output_folder, exist_ok=True)
+    create_dir(run_output_folder)
 
     if verbose:
         print(f"Logs are in {logger_name}.log")
