@@ -354,7 +354,7 @@ def build_and_run_images(df_repos, processed):
                     id_repo_url = jobs[job]
                     try:
                         execution_entries = job.result()
-                        logger.info(f"{id_repo_url}: {len(execution_entries)} executions")
+                        logger.info(f"{id_repo_url}: {len(execution_entries)} executions done")
                         execution_list.extend(execution_entries)
                         for e in execution_entries:
                             if e["build_success"] == 1 and e["image_name"] not in built_images:
@@ -406,6 +406,7 @@ def build_and_run_all_images(query, image_limit):
     db = Database(db_name)
     df_repos = pd.read_sql_query(query, db.conn, chunksize=image_limit)
 
+    # NOTE when you update this, update also dict in get_execution()
     columns = {
                 "script_timestamp": str,
                 "repo_id": int,
