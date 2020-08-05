@@ -169,6 +169,7 @@ def create_repo_table(db_name, providers, launch_limit, access_token=None, max_w
                         "binder_dir": None,
                         "buildpack": None,
                         }
+                    assert list(repo_entry.keys()) == list(columns.keys())
 
                     if access_token:
                         job = executor.submit(get_repo_data, repo_entry, access_token)
