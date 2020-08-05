@@ -341,7 +341,11 @@ def build_and_run_images(df_repos, processed):
         while True:
             if row is not None:
                 # dataframe still has repo to process
-                image_name = get_image_name(row["provider"], row["last_spec"], image_prefix, row["resolved_ref"])
+                # add r2d_commit into tag,
+                # so when we use a different r2d version for same repo with same resolved_ref,
+                # it creates a new image (it doesnt use local or remote image from registry)
+                tag = f'{r2d_commit}-{row["resolved_ref"]}'
+                image_name = get_image_name(row["provider"], row["last_spec"], image_prefix, tag)
                 # TODO before each job, check available disk size for docker and warn
                 job = executor.submit(build_and_run_image, row["id"], row["repo_url"], image_name, row["resolved_ref"])
                 jobs[job] = f'{row["id"]}:{row["repo_url"]}'
@@ -504,6 +508,15 @@ def convert_range(r):
         return None
 
 
+def get_r2d_commit(image):
+    if image.endswith(".dirty"):
+        image = image[:-6]
+    image = image.split(":")[-1].split(".")[-1]
+    if image.startswith("g"):
+        image = image[1:]
+    return image
+
+
 def get_args():
     parser = argparse.ArgumentParser(description=f'This script runs repo2docker to build images of repos in '
                                                  f'{repo_table} table and executes each notebook of built repos '
@@ -552,6 +565,7 @@ def get_args():
 
 
 def main():
+    # make variables with constant values global
     global verbose
     global logger
     global build_log_folder
@@ -560,6 +574,7 @@ def main():
     global push
     global image_prefix
     global r2d_version
+    global r2d_commit
     global max_workers
     global script_ts
     global script_ts_safe
@@ -568,6 +583,7 @@ def main():
     args = get_args()
     db_name = args.db_name
     r2d_version = args.r2d_version
+    r2d_commit = get_r2d_commit(r2d_version)
     launches_range = convert_range(args.launches_range)
     notebooks_range = convert_range(args.notebooks_range)
     forks = args.forks
@@ -580,9 +596,13 @@ def main():
     max_workers = args.max_workers
     verbose = args.verbose
 
+    # script_ts is used in outputs of this image (in database, logs and outputs),
+    # so we can distinguish different executions in different times
     script_ts, script_ts_safe = get_utc_ts()
+    # get main logger for this script
     logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'
     logger = get_logger(logger_name)
+    # create output folders
     build_log_folder = f"build_images/build_images_logs_{script_ts_safe}"
     create_dir(build_log_folder)
     run_output_folder = f"run_images/run_images_logs_{script_ts_safe}"
@@ -602,7 +622,7 @@ def main():
     You could now open the database with `sqlite3 {db_name}` command and
     then run `select build_success, count(*) from (select build_success from {execution_table} where script_timestamp="{script_ts}" group by "repo_id") group by "build_success";` 
     to see how many repos are built successfully or not. Or 
-    run `select nb_success, count(*) from {execution_table} where script_timestamp={script_ts} group by "nb_success";` 
+    run `select nb_success, count(*) from {execution_table} where script_timestamp="{script_ts}" group by "nb_success";` 
     to see how many notebooks are executed successfully or not. 
     """)
 
