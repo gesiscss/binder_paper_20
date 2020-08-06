@@ -1,2 +1,2 @@
 jupyter nbextension enable toc2/main  --user
-wget -q -O analysis/mybinder_archive.db "https://gesisbox.gesis.org/index.php/s/QsRGRSHE4bD6znZ/download"
+wget -q -O analysis/mybinder_archive.db "https://gesisbox.gesis.org/index.php/s/TxmrCSSxgkbfQoQ/download"
