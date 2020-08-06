@@ -62,12 +62,12 @@ def get_repo_data(repo_entry, access_token):
                 # github.GithubException.RateLimitExceededException: 403
                 # https://developer.github.com/v3/#rate-limiting
                 minutes_until_reset = e.data["minutes_until_reset"]
+                minutes_until_reset = int(minutes_until_reset/2)
                 msg = f'{repo_entry["repo_url"]}: Rate limit error, will try again after sleeping {minutes_until_reset} minutes'
                 logger.info(msg)
                 if verbose:
                     print(msg)
                 sleep(minutes_until_reset * 60)
-                # sleep(minutes_until_reset * 60 / 2)
                 # continue to process last repo again
                 continue
             else:
