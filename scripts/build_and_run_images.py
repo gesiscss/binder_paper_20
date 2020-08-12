@@ -29,14 +29,18 @@ def create_dir(dir_path):
     os.chmod(dir_path, 0o777)
 
 
-def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
+def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir, buildpack):
     _, ts_safe = get_utc_ts()
     notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}.log')
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     notebooks = []
     # shell command to find all notebooks
     # excludes checkpoints
-    command = ["/bin/sh", "-c", "find . -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' -print > /io/notebooks.txt"]
+    find_cmd = "find . -type f -name '*.ipynb' ! -path '*/.ipynb_checkpoints/*' -print"
+    if buildpack == "NixBuildPack":
+        command = ["/usr/local/bin/nix-shell-wrapper", f"{find_cmd} | grep ipynb > /io/notebooks.txt"]
+    else:
+        command = ["/bin/sh", "-c", f"{find_cmd} > /io/notebooks.txt"]
     with open(notebooks_log_file, 'w') as log_file:
         try:
             container = client.containers.run(
@@ -79,7 +83,7 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir):
     return notebooks_success, notebooks
 
 
-def run_image(repo_id, repo_url, image_name):
+def run_image(repo_id, repo_url, image_name, buildpack):
     """This function is mostly copied from
     https://github.com/minrk/repo2docker-checker/blob/bd179da5786e08a12ef92295cf02b38a5c2b8ceb/repo2docker_checker/checker.py#L160
     """
@@ -89,7 +93,7 @@ def run_image(repo_id, repo_url, image_name):
     create_dir(repo_output_folder)
     current_dir = os.path.dirname(os.path.realpath(__file__))
 
-    notebooks_success, notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir)
+    notebooks_success, notebooks = detect_notebooks(repo_id, image_name, repo_output_folder, current_dir, buildpack)
     execution_entries = []
     if not notebooks:
         if notebooks_success:
@@ -291,7 +295,7 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
         return result
 
 
-def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
+def build_and_run_image(repo_id, repo_url, image_name, resolved_ref, buildpack):
 
     def get_execution():
         # return a dict with all columns
@@ -308,7 +312,7 @@ def build_and_run_image(repo_id, repo_url, image_name, resolved_ref):
     r = build_image(repo_id, repo_url, image_name, resolved_ref)
     execution.update(r)
     if execution["build_success"] == 1:
-        notebooks_success, _execution_entries = run_image(repo_id, repo_url, image_name)
+        notebooks_success, _execution_entries = run_image(repo_id, repo_url, image_name, buildpack)
         execution["notebooks_success"] = notebooks_success
         if _execution_entries:
             execution_entries = []
@@ -347,7 +351,8 @@ def build_and_run_images(df_repos, processed):
                 tag = f'{r2d_commit}-{row["resolved_ref"]}'
                 image_name = get_image_name(row["provider"], row["last_spec"], image_prefix, tag)
                 # TODO before each job, check available disk size for docker and warn
-                job = executor.submit(build_and_run_image, row["id"], row["repo_url"], image_name, row["resolved_ref"])
+                job = executor.submit(build_and_run_image, row["id"], row["repo_url"], image_name,
+                                                           row["resolved_ref"], row["buildpack"])
                 jobs[job] = f'{row["id"]}:{row["repo_url"]}'
 
             if (jobs and len(jobs) == max_workers) or row is None:
