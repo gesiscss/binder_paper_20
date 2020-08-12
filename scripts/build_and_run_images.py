@@ -6,7 +6,7 @@ from docker.errors import APIError
 from requests import ReadTimeout
 from utils import get_repo2docker_image, get_logger, get_image_name, get_utc_ts, \
      REPO_TABLE as repo_table, EXECUTION_TABLE as execution_table, \
-     DEFAULT_IMAGE_PREFIX as default_image_prefix
+     DEFAULT_IMAGE_PREFIX as default_image_prefix, Timeout, BuildTimeoutException
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
@@ -248,43 +248,26 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
                 e.container.remove(force=True)
                 result["build_success"] = 0
             else:
-                timed_out = False
                 # ex created: '2020-08-04T13:55:56.323133607Z'
                 created = datetime.fromisoformat(
                     container.attrs["Created"].rsplit(".", 1)[0]
                 )
-                for log in container.logs(follow=True, stream=True):
-                    if isinstance(log, bytes):
-                        log = log.decode("utf8", "replace")
-                    log_file.write(log)
-                    # check age of build container
+                try:
+                    with Timeout(seconds=BUILD_TIMEOUT, error_message=f"Timeout ({BUILD_TIMEOUT})"):
+                        # NOTE: if timeout happens while pushing the image,
+                        #  then the image wont be pushed and removed but will remain in local registry
+                        for log in container.logs(follow=True, stream=True):
+                            if isinstance(log, bytes):
+                                log = log.decode("utf8", "replace")
+                            log_file.write(log)
+                        status = container.wait()
+                except BuildTimeoutException:
                     age = (datetime.utcnow() - created).seconds
-                    if age > BUILD_TIMEOUT:
-                        # if already pushing, let it finish
-                        if "Pushing image" not in log:
-                            timed_out = True
-                            log_file.write(f"Timed out ({age} > {BUILD_TIMEOUT})\n")
-                            break
-                if timed_out:
+                    log_file.write(f"Build Timed out ({age} > {BUILD_TIMEOUT})\n")
                     result["build_success"] = 0
                     result["build_time"] = -1
-                    logger.info(f"{repo_id} : {image_name} : Build Timed out ({age} > {BUILD_TIMEOUT})")
+                    logger.info(f"{repo_id} : {image_name} : Build Timed out ({BUILD_TIMEOUT})")
                 else:
-                    # if log_dict["phase"] == "failure":
-                    #     # "failure"s are from docker build
-                    #     # {"message": "The command '/bin/sh -c ${KERNEL_PYTHON_PREFIX}/bin/pip install --no-cache-dir -r \"requirements.txt\"' returned a non-zero code: 1", "phase": "failure"}
-                    #     build_success = 0
-                    # elif log_dict["phase"] == "failed":
-                    #     # ?"failed"s are from python docker client?
-                    #     # Ex: Error during build: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out.  .... "phase": "failed"}
-                    #     build_success = 2
-                    # elif log_dict["message"].startswith("Successfully") and log_dict["phase"] == "building":
-                    #     # {'message': 'Successfully tagged bp20-binder-2dexamples-2drequirements-55ab5c:11cdea057c300242a30e5c265d8dc79f60f644e1\n', 'phase': 'building'}
-                    #     build_success = 1
-                    # else:
-                    #     # unknown - look at the log file
-                    #     build_success = 3
-                    status = container.wait()
                     result["build_success"] = 1 if status["StatusCode"] == 0 else 0
                     if result["build_success"]:
                         result["build_time"] = (datetime.utcnow() - created).seconds
@@ -337,7 +320,6 @@ def build_and_run_images(df_repos, processed):
     execution_list = []
     built_images = []
     rows = df_repos.iterrows()
-    # with ThreadPoolExecutor(max_workers=max_workers) as executor:
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         jobs = {}
         jobs_done = 0

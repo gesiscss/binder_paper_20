@@ -3,6 +3,7 @@ import time
 import requests
 import subprocess
 import tempfile
+import signal
 from datetime import datetime
 from yaml import safe_load
 from github import Github, GithubException
@@ -343,3 +344,28 @@ def drop_column(db_name, table_name, columns):
     INSERT INTO {table_name} SELECT {",".join(columns)} FROM {table_name}_backup;
     DROP TABLE {table_name}_backup;
     COMMIT;""")
+
+
+class BuildTimeoutException(Exception):
+    pass
+
+
+class Timeout:
+    """
+    Warning: dont use this class in multi-threading, because signal only works in main thread.
+    """
+    def __init__(self, seconds=1, error_message='Timeout'):
+        self.seconds = seconds
+        self.error_message = error_message
+
+    def handle_timeout(self, signum, frame):
+        # TODO raising builtin TimeoutError didnt work, but why?
+        raise BuildTimeoutException(self.error_message)
+
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self.handle_timeout)
+        signal.alarm(self.seconds)
+
+    def __exit__(self, type, value, traceback):
+        # reset timer of signal
+        signal.alarm(0)
