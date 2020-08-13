@@ -75,6 +75,7 @@ image_name | docker image name
 r2d_version | 
 build_timestamp | 
 build_success | 1 or 0
+build_time | build duration in seconds
 notebooks_success | 1 or 0, if notebooks detection is successful or not
 nb_rel_path | notebook's relative path in repo
 nb_success | 1 or 0, if notebook execution successful or not
