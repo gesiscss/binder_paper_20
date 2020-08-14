@@ -6,7 +6,7 @@ from docker.errors import APIError
 from requests import ReadTimeout
 from utils import get_repo2docker_image, get_logger, get_image_name, get_utc_ts, \
      REPO_TABLE as repo_table, EXECUTION_TABLE as execution_table, \
-     DEFAULT_IMAGE_PREFIX as default_image_prefix, Timeout, BuildTimeoutException
+     DEFAULT_IMAGE_PREFIX as default_image_prefix, Timeout, BuildTimeoutException, check_if_exists
 from datetime import datetime
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures import as_completed
@@ -569,6 +569,7 @@ def main():
 
     args = get_args()
     db_name = args.db_name
+    check_if_exists(db_name)
     r2d_version = args.r2d_version
     r2d_commit = get_r2d_commit(r2d_version)
     launches_range = convert_range(args.launches_range)

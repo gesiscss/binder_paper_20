@@ -12,7 +12,7 @@ from sqlite_utils import Database
 from time import sleep
 from utils import get_ref, get_repo_data_from_github_api, get_logger, GithubException, \
     get_repo_data_from_git, LAUNCH_TABLE as launch_table, REPO_TABLE as repo_table, \
-    get_utc_ts
+    get_utc_ts, check_if_exists
 
 
 def get_repos_from_launch_table(db, providers, launch_limit):
@@ -289,6 +289,7 @@ def main():
 
     args = get_args()
     db_name = args.db_name
+    check_if_exists(db_name)
     # providers = ['"'+p.strip()+'"' for p in args.providers.split(",")]
     providers = ['"'+p.strip()+'"' for p in "GitHub,Gist".split(",")]
     launch_limit = args.launch_limit

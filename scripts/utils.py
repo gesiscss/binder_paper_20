@@ -4,6 +4,7 @@ import requests
 import subprocess
 import tempfile
 import signal
+import os
 from datetime import datetime
 from yaml import safe_load
 from github import Github, GithubException
@@ -52,6 +53,12 @@ def get_utc_ts():
     ts = datetime.utcnow().replace(microsecond=0).isoformat()
     ts_safe = ts.replace(":", "-")
     return ts, ts_safe
+
+
+def check_if_exists(f):
+    if not os.path.exists(f):
+        raise FileNotFoundError(f"{f} doesnt exist")
+    return True
 
 
 def get_org(provider, spec):

@@ -1,7 +1,7 @@
 import argparse
 import os
 from sqlite_utils import Database
-from utils import EXECUTION_TABLE as execution_table, get_utc_ts, get_logger
+from utils import EXECUTION_TABLE as execution_table, get_utc_ts, get_logger, check_if_exists
 
 
 def get_args():
@@ -21,12 +21,10 @@ def main():
     build_log_folders = []
     for f in args.build_log_folders.split(","):
         abs_f = os.path.abspath(f)
-        if not os.path.exists(abs_f):
-            raise FileNotFoundError(f"{f} doesnt exist")
+        check_if_exists(abs_f)
         build_log_folders.append(abs_f)
     db_name = args.db_name
-    if not os.path.exists(db_name):
-        raise FileNotFoundError(f"database {db_name} doesnt exist")
+    check_if_exists(db_name)
 
     # prepare logger
     _, script_ts_safe = get_utc_ts()
