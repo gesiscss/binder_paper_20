@@ -1,3 +1,11 @@
+"""
+WIP
+TODO: find other common errors why build fails.
+TODO: parse also build_and_run_images_at_<ts>.log files, there are some unhandled errors
+      for example some repos causes "FileNotFoundError: No such file or directory: notebooks.txt"
+      and they dont have any entry in execution table.
+TODO: check what other unhandled errors are in build_and_run_images_at_<ts>.log files
+"""
 import argparse
 import os
 from sqlite_utils import Database
@@ -54,12 +62,14 @@ def main():
         logger.info(f"{len_log_files} log files")
         count = 0
         for log_file in log_files:
-            count += 1
             repo_id = int(log_file.split("_")[0])
+            log_file = os.path.join(build_log_folder, log_file)
+            # print(log_file)
+            count += 1
             # provider_r2d = "404"
             buildpack = "404"
             build_error = "None"
-            with open(os.path.join(build_log_folder, log_file), "r") as f:
+            with open(log_file, "r") as f:
                 for line in f:
                     line = line.rstrip()
                     # if line.startswith("Picked") and line.endswith("provider."):
@@ -78,15 +88,18 @@ def main():
             new_data = {"buildpack": buildpack, "build_error": build_error}
             # print(new_data)
             if buildpack == "404":
+                # TODO check why?
+                #  - docker readtimeout
+                #  - repo or ref doesnt exist anymore or another cloning error
                 logger.warning(f"{repo_id}: {new_data}")
             # update only rows that this log file is related,
             # a repo can have many builds in different times for different r2d versions
-            db.conn.execute(f"""UPDATE {execution_table} 
-                                SET buildpack="{buildpack}", build_error="{build_error}" 
+            db.conn.execute(f"""UPDATE {execution_table}
+                                SET buildpack="{buildpack}", build_error="{build_error}"
                                 WHERE script_timestamp="{script_timestamp}" AND repo_id={repo_id};""")
             db.conn.commit()
-            # logger.info(f"{repo_id} : {new_data}")
-            print(f'{(count*100)/len_log_files}%\r', end="")
+            # logger.info(f"{script_timestamp} : {repo_id} : {new_data}")
+            print(f'{(count*100)/len_log_files:.3f}%\r', end="")
 
     logger.info("Done")
 
