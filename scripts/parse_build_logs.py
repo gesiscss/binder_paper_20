@@ -16,14 +16,25 @@ def get_args():
 
 
 def main():
+    args = get_args()
+    # check inputs
+    build_log_folders = []
+    for f in args.build_log_folders.split(","):
+        abs_f = os.path.abspath(f)
+        if not os.path.exists(abs_f):
+            raise FileNotFoundError(f"{f} doesnt exist")
+        build_log_folders.append(abs_f)
+    db_name = args.db_name
+    if not os.path.exists(db_name):
+        raise FileNotFoundError(f"database {db_name} doesnt exist")
+
+    # prepare logger
     _, script_ts_safe = get_utc_ts()
     logger_name = f'{os.path.basename(__file__)[:-3]}_at_{script_ts_safe}'.replace("-", "_")
     logger = get_logger(logger_name)
     logger.info("Start")
     print(f"Logs are in {logger_name}.log")
 
-    args = get_args()
-    db_name = args.db_name
     db = Database(db_name)
     # add new columns
     if "buildpack" not in db[execution_table].columns_dict:
@@ -32,7 +43,6 @@ def main():
         db[execution_table].add_column("build_error", str)
 
     # update values of new columns per each row
-    build_log_folders = args.build_log_folders.split(",")
     for build_log_folder in build_log_folders:
         print(build_log_folder)
         logger.info(build_log_folder)
@@ -56,16 +66,19 @@ def main():
                     line = line.rstrip()
                     # if line.startswith("Picked") and line.endswith("provider."):
                     #     provider_r2d = line.split(" ")[1]
-                    if line.startswith("Using") and line.endswith("builder"):
+                    if buildpack == "404" and line.startswith("Using") and line.endswith("builder"):
                         buildpack = line.split(" ")[1]
                     # TODO what are other errors, how to detect them?
-                    elif "ReadTimeoutError" in line:
+                    elif build_error == "None" and "ReadTimeoutError" in line:
                         # NOTE: this doesnt catch only docker timeouts, e.g. also from pip
+                        # urllib3.exceptions.ReadTimeoutError: UnixHTTPConnectionPool(host='localhost', port=None) ->
+                        # this is the timeout error from docker from repo2docker
                         build_error = "ReadTimeoutError"
                         logger.info(f"{repo_id}: ReadTimeoutError: {line}")
                         break
             # save new data into tables
             new_data = {"buildpack": buildpack, "build_error": build_error}
+            # print(new_data)
             if buildpack == "404":
                 logger.warning(f"{repo_id}: {new_data}")
             # update only rows that this log file is related,
@@ -74,7 +87,7 @@ def main():
                                 SET buildpack="{buildpack}", build_error="{build_error}" 
                                 WHERE script_timestamp="{script_timestamp}" AND repo_id={repo_id};""")
             db.conn.commit()
-            logger.info(f"{repo_id} : {new_data} : {build_error}")
+            # logger.info(f"{repo_id} : {new_data}")
             print(f'{(count*100)/len_log_files}%\r', end="")
 
     logger.info("Done")
