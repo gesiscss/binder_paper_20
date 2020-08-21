@@ -81,26 +81,30 @@ def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir, build
                 notebooks_success = 1 if status["StatusCode"] == 0 else 0
                 if notebooks_success:
                     notebooks_file = os.path.join(repo_output_folder, 'notebooks.txt')
-                    with open(notebooks_file, 'r') as f:
-                        for line in f:
-                            nb_rel_path = line.rstrip()
-                            if nb_rel_path.startswith("./"):
-                                nb_rel_path = nb_rel_path[2:]
-                            if not nb_rel_path:
-                                # skip empty last line
-                                continue
-                            # # TODO skip notebooks in hidden folders
-                            # #  they are mostly in .local, .cache, .julia, .jupyter or .ipython
-                            # #  but there are some repos like https://github.com/edsto1/Covid19_Analysis_and_MachineLearning_Predictions/tree/26862a05ab1e830c0a33640d7d14c7e23dc3cd40
-                            # # use this command to list hidden files in run logs: find run_images/ -type f -name ".*" ! -name ".local*" ! -name ".cache*" ! -name ".julia*" ! -name ".ipython*" ! -name ".jupyter*"  -print
-                            # # TODO or update `find_cmd` commanad to skip those files                                # if nb_rel_path.startswith(".local") or \
-                            #    nb_rel_path.startswith(".cache") or \
-                            #    nb_rel_path.startswith(".julia") or \
-                            #    nb_rel_path.startswith(".jupyter") or \
-                            #    nb_rel_path.startswith(".ipython"):
-                            #     # and skip notebooks in hidden folders
-                            #     continue
-                            notebooks.append(nb_rel_path)
+                    try:
+                        with open(notebooks_file, 'r') as f:
+                            for line in f:
+                                nb_rel_path = line.rstrip()
+                                if nb_rel_path.startswith("./"):
+                                    nb_rel_path = nb_rel_path[2:]
+                                if not nb_rel_path:
+                                    # skip empty last line
+                                    continue
+                                # # TODO skip notebooks in hidden folders
+                                # #  they are mostly in .local, .cache, .julia, .jupyter or .ipython
+                                # #  but there are some repos like https://github.com/edsto1/Covid19_Analysis_and_MachineLearning_Predictions/tree/26862a05ab1e830c0a33640d7d14c7e23dc3cd40
+                                # # use this command to list hidden files in run logs: find run_images/ -type f -name ".*" ! -name ".local*" ! -name ".cache*" ! -name ".julia*" ! -name ".ipython*" ! -name ".jupyter*"  -print
+                                # # TODO or update `find_cmd` commanad to skip those files                                # if nb_rel_path.startswith(".local") or \
+                                #    nb_rel_path.startswith(".cache") or \
+                                #    nb_rel_path.startswith(".julia") or \
+                                #    nb_rel_path.startswith(".jupyter") or \
+                                #    nb_rel_path.startswith(".ipython"):
+                                #     # and skip notebooks in hidden folders
+                                #     continue
+                                notebooks.append(nb_rel_path)
+                    except FileNotFoundError as e:
+                        notebooks_success = 0
+                        logger.exception(f"{repo_id} : {buildpack} : detect_notebooks")
     return notebooks_success, notebooks
 
 
