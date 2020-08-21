@@ -231,7 +231,9 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     if image:
         # image exists locally or in the registry
         result["build_success"] = 1
-        # result["build_timestamp"] = image.attrs["Created"].split(".")[0]
+        result["build_timestamp"] = image.attrs["Created"].split(".")[0]
+        # TODO build duration will be null
+        # result["build_time"] =
         return result
     else:
         logger.info(f"{repo_id} : Building {image_name}")
