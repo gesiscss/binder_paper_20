@@ -31,7 +31,7 @@ def create_dir(dir_path):
 
 def detect_notebooks(repo_id, image_name, repo_output_folder, current_dir, buildpack):
     _, ts_safe = get_utc_ts()
-    notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}.log')
+    notebooks_log_file = os.path.join(repo_output_folder, f'notebooks_{ts_safe}_logs.txt')
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     notebooks = []
     # shell command to find all notebooks
