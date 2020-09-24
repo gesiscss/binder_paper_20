@@ -210,23 +210,24 @@ def build_image(repo_id, repo_url, image_name, resolved_ref):
     result = {}
     client = docker.from_env(timeout=DOCKER_TIMEOUT)
     image = None
-    try:
-        image = client.images.get(image_name)
-        logger.info(f"{repo_id} : Image {image_name} found locally")
-    except docker.errors.ImageNotFound:
+    if not force_build:
         try:
-            repository, tag = image_name.rsplit(":", 1)
-            image = client.images.pull(repository, tag)
-            logger.info(f"{repo_id} : Image {image_name} found in registry")
-        except docker.errors.NotFound:
-            # will build
-            pass
-    else:
-        if push:
-            # if found locally, push to registry
-            logger.info(f"Pushing it to registry")
-            repository, tag = image_name.rsplit(":", 1)
-            client.images.push(repository, tag)
+            image = client.images.get(image_name)
+            logger.info(f"{repo_id} : Image {image_name} found locally")
+        except docker.errors.ImageNotFound:
+            try:
+                repository, tag = image_name.rsplit(":", 1)
+                image = client.images.pull(repository, tag)
+                logger.info(f"{repo_id} : Image {image_name} found in registry")
+            except docker.errors.NotFound:
+                # will build
+                pass
+        else:
+            if push:
+                # if found locally, push to registry
+                logger.info(f"Pushing it to registry")
+                repository, tag = image_name.rsplit(":", 1)
+                client.images.push(repository, tag)
 
     if image:
         # image exists locally or in the registry
@@ -571,6 +572,8 @@ def get_args():
                              'Default is 0, which means build images of all repos.')
     parser.add_argument('-q', '--query', required=False,
                         help='Custom query to select repos from database. This overrides all other query args.')
+    parser.add_argument('-fb', '--force_build', required=False, default=False, action='store_true',
+                        help='Force build image, dont check if locally or in registry exists.')
     parser.add_argument('-p', '--push', required=False, default=False, action='store_true',
                         help=f'Push to remote registry. Default is False.')
     parser.add_argument('-ip', '--image_prefix', required=False, default=default_image_prefix,
@@ -600,6 +603,7 @@ def main():
     global script_ts
     global script_ts_safe
     global notebooks_range
+    global force_build
 
     args = get_args()
     db_name = args.db_name
@@ -614,6 +618,7 @@ def main():
     query = args.query or generate_repos_query(forks, buildpacks, launches_range, repo_limit)
     image_limit = args.image_limit
     push = args.push
+    force_build = args.force_build
     image_prefix = args.image_prefix
     max_workers = args.max_workers
     verbose = args.verbose
